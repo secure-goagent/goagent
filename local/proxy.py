@@ -1604,7 +1604,6 @@ def gae_urlfetch(method, url, headers, payload, fetchserver, **kwargs):
     # prepare GAE request
     request_method = 'POST'
     request_headers = {}
-    rc4_key = kwargs.get('password')
     if kwargs.get('password') and 'rc4' in common.GAE_OPTIONS and __RSA_KEY__:
         from Crypto.PublicKey import RSA
         from Crypto.Cipher import PKCS1_OAEP
@@ -1613,6 +1612,8 @@ def gae_urlfetch(method, url, headers, payload, fetchserver, **kwargs):
         rsakey = PKCS1_OAEP.new(rsakey)
         rc4_key = read_random_bits(128)
         request_headers['X-GOA-Options-KEY'] = base64.b64encode(rsakey.encrypt(rc4_key))
+    else:
+        rc4_key = kwargs.get('password')
     if common.GAE_OBFUSCATE:
         if 'rc4' in common.GAE_OPTIONS:
             request_headers['X-GOA-Options'] = 'rc4'

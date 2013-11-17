@@ -174,15 +174,14 @@ def gae_application(environ, start_response):
     wsgi_input = environ['wsgi.input']
     input_data = wsgi_input.read()
     
-    rc4_key = __password__
     if 'rc4' in options and rc4_key and __RSA_KEY__:
-        #logging.info(rc4_key)
         from Crypto.PublicKey import RSA
         from Crypto.Cipher import PKCS1_OAEP
         rsakey = RSA.importKey(__RSA_KEY__.strip())
         rsakey = PKCS1_OAEP.new(rsakey)
         rc4_key = rsakey.decrypt(base64.b64decode(rc4_key))
-        #logging.info(rc4_key)
+    else :
+        rc4_key = __password__
 
     try:
         if cookie:
