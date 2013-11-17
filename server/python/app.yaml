@@ -6,7 +6,7 @@ threadsafe: true
 
 libraries:
 - name: pycrypto
-  version: "2.3"
+  version: "latest"
 
 handlers:
 - url: /fetch\.py

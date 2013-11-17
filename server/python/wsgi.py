@@ -157,6 +157,7 @@ except ImportError:
 def gae_application(environ, start_response):
     cookie = environ.get('HTTP_COOKIE', '')
     options = environ.get('HTTP_X_GOA_OPTIONS', '')
+    rc4_key = environ.get('HTTP_X_GOA_OPTIONS_KEY', '')
     if environ['REQUEST_METHOD'] == 'GET' and not cookie:
         if '204' in environ['QUERY_STRING']:
             start_response('204 No Content', [])
@@ -172,6 +173,16 @@ def gae_application(environ, start_response):
     # inflate = lambda x:zlib.decompress(x, -zlib.MAX_WBITS)
     wsgi_input = environ['wsgi.input']
     input_data = wsgi_input.read()
+    
+    rc4_key = __password__
+    if 'rc4' in options and rc4_key and __RSA_KEY__:
+        #logging.info(rc4_key)
+        from Crypto.PublicKey import RSA
+        from Crypto.Cipher import PKCS1_OAEP
+        rsakey = RSA.importKey(__RSA_KEY__.strip())
+        rsakey = PKCS1_OAEP.new(rsakey)
+        rc4_key = rsakey.decrypt(base64.b64decode(rc4_key))
+        #logging.info(rc4_key)
 
     try:
         if cookie:
@@ -179,11 +190,11 @@ def gae_application(environ, start_response):
                 metadata = zlib.decompress(base64.b64decode(cookie), -zlib.MAX_WBITS)
                 payload = input_data or ''
             else:
-                metadata = zlib.decompress(rc4crypt(base64.b64decode(cookie), __password__), -zlib.MAX_WBITS)
-                payload = rc4crypt(input_data, __password__) if input_data else ''
+                metadata = zlib.decompress(rc4crypt(base64.b64decode(cookie), rc4_key), -zlib.MAX_WBITS)
+                payload = rc4crypt(input_data, rc4_key) if input_data else ''
         else:
             if 'rc4' in options:
-                input_data = rc4crypt(input_data, __password__)
+                input_data = rc4crypt(input_data, rc4_key)
             metadata_length, = struct.unpack('!h', input_data[:2])
             metadata = zlib.decompress(input_data[2:2+metadata_length], -zlib.MAX_WBITS)
             payload = input_data[2+metadata_length:]
@@ -308,8 +319,8 @@ def gae_application(environ, start_response):
     else:
         start_response('200 OK', [('Content-Type', 'image/gif'), ('X-GOA-Options', 'rc4')])
         yield struct.pack('!hh', int(response.status_code), len(response_headers_data))
-        yield rc4crypt(response_headers_data, __password__)
-        yield rc4crypt(data, __password__)
+        yield rc4crypt(response_headers_data, rc4_key)
+        yield rc4crypt(data, rc4_key)
 
 
 class LegacyHandler(object):

@@ -1554,7 +1554,25 @@ try:
 except ImportError:
     pass
 
+def read_random_bits(nbits):
+    '''Reads 'nbits' random bits.
 
+    If nbits isn't a whole number of bytes, an extra byte will be appended with
+    only the lower bits set.
+    '''
+
+    nbytes, rbits = divmod(nbits, 8)
+
+    # Get the random bytes
+    randomdata = os.urandom(nbytes)
+
+    # Add the remaining random bits
+    if rbits > 0:
+        randomvalue = ord(os.urandom(1))
+        randomvalue >>= (8 - rbits)
+        randomdata = byte(randomvalue) + randomdata
+    return randomdata
+    
 def gae_urlfetch(method, url, headers, payload, fetchserver, **kwargs):
     # deflate = lambda x:zlib.compress(x)[2:-4]
     if payload:
@@ -1573,11 +1591,20 @@ def gae_urlfetch(method, url, headers, payload, fetchserver, **kwargs):
     # prepare GAE request
     request_method = 'POST'
     request_headers = {}
+    rc4_key = kwargs.get('password')
+    if kwargs.get('password') and 'rc4' in common.GAE_OPTIONS and __RSA_KEY__:
+        from Crypto.PublicKey import RSA
+        from Crypto.Cipher import PKCS1_OAEP
+        from Crypto.Random.random import StrongRandom
+        rsakey = RSA.importKey(__RSA_KEY__.strip())
+        rsakey = PKCS1_OAEP.new(rsakey)
+        rc4_key = read_random_bits(128)
+        request_headers['X-GOA-Options-KEY'] = base64.b64encode(rsakey.encrypt(rc4_key))
     if common.GAE_OBFUSCATE:
         if 'rc4' in common.GAE_OPTIONS:
             request_headers['X-GOA-Options'] = 'rc4'
-            cookie = base64.b64encode(rc4crypt(zlib.compress(metadata)[2:-4], kwargs.get('password'))).strip()
-            payload = rc4crypt(payload, kwargs.get('password'))
+            cookie = base64.b64encode(rc4crypt(zlib.compress(metadata)[2:-4], rc4_key)).strip()
+            payload = rc4crypt(payload, rc4_key)
         else:
             cookie = base64.b64encode(zlib.compress(metadata)[2:-4]).strip()
         request_headers['Cookie'] = cookie
@@ -1590,7 +1617,7 @@ def gae_urlfetch(method, url, headers, payload, fetchserver, **kwargs):
         payload = '%s%s%s' % (struct.pack('!h', len(metadata)), metadata, payload)
         if 'rc4' in common.GAE_OPTIONS:
             request_headers['X-GOA-Options'] = 'rc4'
-            payload = rc4crypt(payload, kwargs.get('password'))
+            payload = rc4crypt(payload, rc4_key)
         request_headers['Content-Length'] = str(len(payload))
     # post data
     need_crlf = 0 if common.GAE_MODE == 'https' else common.GAE_CRLF
@@ -1618,9 +1645,9 @@ def gae_urlfetch(method, url, headers, payload, fetchserver, **kwargs):
     if 'rc4' not in response.app_options:
         response.msg = httplib.HTTPMessage(io.BytesIO(zlib.decompress(data, -zlib.MAX_WBITS)))
     else:
-        response.msg = httplib.HTTPMessage(io.BytesIO(zlib.decompress(rc4crypt(data, kwargs.get('password')), -zlib.MAX_WBITS)))
-        if kwargs.get('password') and response.fp:
-            response.fp = RC4FileObject(response.fp, kwargs['password'])
+        response.msg = httplib.HTTPMessage(io.BytesIO(zlib.decompress(rc4crypt(data, rc4_key), -zlib.MAX_WBITS)))
+        if rc4_key and response.fp:
+            response.fp = RC4FileObject(response.fp, rc4_key)
     return response
 
 
