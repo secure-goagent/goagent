@@ -31,8 +31,10 @@
 #      Shusen Liu        <liushusen.smart@gmail.com>
 #      Yad Smood         <y.s.inside@gmail.com>
 #      Chen Shuang       <cs0x7f@gmail.com>
+#      cnfuyu            <cnfuyu@gmail.com>
+#      cuixin            <steven.cuixin@gmail.com>
 
-__version__ = '3.0.8'
+__version__ = '3.0.9a'
 
 import sys
 import os
@@ -306,7 +308,7 @@ class CertUtil(object):
                 del crypt32
                 return 0 if ret else -1
         elif sys.platform == 'darwin':
-            return os.system('security find-certificate -a -c "%s" | grep "%s" >/dev/null || security add-trusted-cert -d -r trustRoot -k "/Library/Keychains/System.keychain" "%s"' % (commonname, commonname, certfile))
+            return os.system(('security find-certificate -a -c "%s" | grep "%s" >/dev/null || security add-trusted-cert -d -r trustRoot -k "/Library/Keychains/System.keychain" "%s"' % (commonname, commonname, certfile.decode('utf-8'))).encode('utf-8'))
         elif sys.platform.startswith('linux'):
             import platform
             platform_distname = platform.dist()[0]
@@ -325,7 +327,7 @@ class CertUtil(object):
     def check_ca():
         #Check CA exists
         capath = os.path.join(os.path.dirname(os.path.abspath(__file__)), CertUtil.ca_keyfile)
-        certdir = os.path.join(os.path.dirname(__file__), CertUtil.ca_certdir)
+        certdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), CertUtil.ca_certdir)
         if not os.path.exists(capath):
             if not OpenSSL:
                 logging.critical('CA.key is not exist and OpenSSL is disabled, ABORT!')
@@ -503,15 +505,18 @@ class PacUtil(object):
         except ValueError:
             need_update = False
         try:
-            logging.info('try download %r to update_pacfile(%r)', common.PAC_ADBLOCK, filename)
-            adblock_content = opener.open(common.PAC_ADBLOCK).read()
-            logging.info('%r downloaded, try convert it with adblock2pac', common.PAC_ADBLOCK)
-            if 'gevent' in sys.modules and time.sleep is getattr(sys.modules['gevent'], 'sleep', None) and hasattr(gevent.get_hub(), 'threadpool'):
-                jsrule = gevent.get_hub().threadpool.apply(PacUtil.adblock2pac, (adblock_content, 'FindProxyForURLByAdblock', blackhole, default))
+            if common.PAC_ADBLOCK:
+                logging.info('try download %r to update_pacfile(%r)', common.PAC_ADBLOCK, filename)
+                adblock_content = opener.open(common.PAC_ADBLOCK).read()
+                logging.info('%r downloaded, try convert it with adblock2pac', common.PAC_ADBLOCK)
+                if 'gevent' in sys.modules and time.sleep is getattr(sys.modules['gevent'], 'sleep', None) and hasattr(gevent.get_hub(), 'threadpool'):
+                    jsrule = gevent.get_hub().threadpool.apply(PacUtil.adblock2pac, (adblock_content, 'FindProxyForURLByAdblock', blackhole, default))
+                else:
+                    jsrule = PacUtil.adblock2pac(adblock_content, 'FindProxyForURLByAdblock', blackhole, default)
+                content += '\r\n' + jsrule + '\r\n'
+                logging.info('%r downloaded and parsed', common.PAC_ADBLOCK)
             else:
-                jsrule = PacUtil.adblock2pac(adblock_content, 'FindProxyForURLByAdblock', blackhole, default)
-            content += '\r\n' + jsrule + '\r\n'
-            logging.info('%r downloaded and parsed', common.PAC_ADBLOCK)
+                content += '\r\nfunction FindProxyForURLByAdblock(url, host) {return "DIRECT";}\r\n'
         except Exception as e:
             need_update = False
             logging.exception('update_pacfile failed: %r', e)
@@ -648,7 +653,11 @@ class PacUtil(object):
                     jsLine = 'if (host == "%s") return "%s";' % (line, return_proxy)
             elif use_domain:
                 if line.split('/')[0].count('.') <= 1:
-                    jsLine = 'if (shExpMatch(url, "http://*.%s*")) return "%s";' % (line, return_proxy)
+                    if use_postfix:
+                        jsCondition = ' || '.join('shExpMatch(url, "http://*.%s*%s")' % (line, x) for x in use_postfix)
+                        jsLine = 'if (%s) return "%s";' % (jsCondition, return_proxy)
+                    else:
+                        jsLine = 'if (shExpMatch(url, "http://*.%s*")) return "%s";' % (line, return_proxy)
                 else:
                     if '*' in line:
                         if use_postfix:
@@ -870,6 +879,7 @@ class HTTPUtil(object):
         self.max_timeout = max_timeout
         self.tcp_connection_time = collections.defaultdict(float)
         self.ssl_connection_time = collections.defaultdict(float)
+        self.ssl_connection_cache = collections.defaultdict(Queue.PriorityQueue)
         self.max_timeout = max_timeout
         self.dns = {}
         self.crlf = 0
@@ -1072,8 +1082,19 @@ class HTTPUtil(object):
                 if sock:
                     sock.close()
         def _close_ssl_connection(count, queobj):
-            for _ in range(count):
-                queobj.get()
+            for i in range(count):
+                sock = queobj.get()
+                if sock and not isinstance(sock, Exception):
+                    if i == 0:
+                        self.ssl_connection_cache[address].put((time.time(), sock))
+                    else:
+                        sock.close()
+        try:
+            ctime, sock = self.ssl_connection_cache[address].get_nowait()
+            if time.time() - ctime < 30:
+                return sock
+        except Queue.Empty:
+            pass
         host, port = address
         result = None
         # create_connection = _create_ssl_connection if not self.ssl_obfuscate and not self.ssl_validate else _create_openssl_connection
@@ -1327,7 +1348,7 @@ class Common(object):
         self.PAC_PORT = self.CONFIG.getint('pac', 'port')
         self.PAC_FILE = self.CONFIG.get('pac', 'file').lstrip('/')
         self.PAC_GFWLIST = self.CONFIG.get('pac', 'gfwlist')
-        self.PAC_ADBLOCK = self.CONFIG.get('pac', 'adblock')
+        self.PAC_ADBLOCK = self.CONFIG.get('pac', 'adblock') if self.CONFIG.has_option('pac', 'adblock') else ''
         self.PAC_EXPIRED = self.CONFIG.getint('pac', 'expired')
 
         self.PAAS_ENABLE = self.CONFIG.getint('paas', 'enable')
@@ -1483,76 +1504,50 @@ def response_replace_header(response, name, value):
         response.header.replace_header(name, value)
 
 
+try:
+    from Crypto.Cipher.ARC4 import new as _Crypto_Cipher_ARC4_new
+except ImportError:
+    logging.warn('Load Crypto.Cipher.ARC4 Failed, Use Pure Python Instead.')
+    class _Crypto_Cipher_ARC4_new(object):
+        def __init__(self, key):
+            x = 0
+            box = range(256)
+            for i, y in enumerate(box):
+                x = (x + y + ord(key[i % len(key)])) & 0xff
+                box[i], box[x] = box[x], y
+            self.__box = box
+            self.__x = 0
+            self.__y = 0
+        def encrypt(self, data):
+            out = []
+            out_append = out.append
+            x = self.__x
+            y = self.__y
+            box = self.__box
+            for char in data:
+                x = (x + 1) & 0xff
+                y = (y + box[x]) & 0xff
+                box[x], box[y] = box[y], box[x]
+                out_append(chr(ord(char) ^ box[(box[x] + box[y]) & 0xff]))
+            self.__x = x
+            self.__y = y
+            return ''.join(out)
+
+
 def rc4crypt(data, key):
-    """RC4 algorithm"""
-    if not key or not data:
-        return data
-    x = 0
-    box = range(256)
-    for i, y in enumerate(box):
-        x = (x + y + ord(key[i % len(key)])) & 0xff
-        box[i], box[x] = box[x], y
-    x = y = 0
-    out = []
-    out_append = out.append
-    for char in data:
-        x = (x + 1) & 0xff
-        y = (y + box[x]) & 0xff
-        box[x], box[y] = box[y], box[x]
-        out_append(chr(ord(char) ^ box[(box[x] + box[y]) & 0xff]))
-    return ''.join(out)
+    return _Crypto_Cipher_ARC4_new(key).encrypt(data) if key else data
 
 
 class RC4FileObject(object):
     """fileobj for rc4"""
     def __init__(self, stream, key):
         self.__stream = stream
-        x = 0
-        box = range(256)
-        for i, y in enumerate(box):
-            x = (x + y + ord(key[i % len(key)])) & 0xff
-            box[i], box[x] = box[x], y
-        self.__box = box
-        self.__x = 0
-        self.__y = 0
-
+        self.__cipher = _Crypto_Cipher_ARC4_new(key) if key else lambda x:x
     def __getattr__(self, attr):
-        if attr not in ('__stream', '__box', '__x', '__y'):
+        if attr not in ('__stream', '__cipher'):
             return getattr(self.__stream, attr)
-
     def read(self, size=-1):
-        out = []
-        out_append = out.append
-        x = self.__x
-        y = self.__y
-        box = self.__box
-        data = self.__stream.read(size)
-        for char in data:
-            x = (x + 1) & 0xff
-            y = (y + box[x]) & 0xff
-            box[x], box[y] = box[y], box[x]
-            out_append(chr(ord(char) ^ box[(box[x] + box[y]) & 0xff]))
-        self.__x = x
-        self.__y = y
-        return ''.join(out)
-
-
-try:
-    from Crypto.Cipher.ARC4 import new as _Crypto_Cipher_ARC4_new
-    def rc4crypt(data, key):
-        return _Crypto_Cipher_ARC4_new(key).encrypt(data) if key else data
-    class RC4FileObject(object):
-        """fileobj for rc4"""
-        def __init__(self, stream, key):
-            self.__stream = stream
-            self.__cipher = _Crypto_Cipher_ARC4_new(key) if key else lambda x:x
-        def __getattr__(self, attr):
-            if attr not in ('__stream', '__cipher'):
-                return getattr(self.__stream, attr)
-        def read(self, size=-1):
-            return self.__cipher.encrypt(self.__stream.read(size))
-except ImportError:
-    pass
+        return self.__cipher.encrypt(self.__stream.read(size))
 
 def read_random_bits(nbits):
     '''Reads 'nbits' random bits.
@@ -2035,7 +2030,7 @@ class GAEProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             if common.HOSTS_MATCH and any(x(self.path) for x in common.HOSTS_MATCH):
                 realhosts = next(common.HOSTS_MATCH[x] for x in common.HOSTS_MATCH if x(self.path)) or re.sub(r':\d+$', '', self.parsed_url.netloc)
                 realhost = random.choice(realhosts.split('|'))
-                logging.debug('hosts pattern mathed, url=%r realhost=%r', self.path, realhost)
+                logging.debug('hosts pattern matched, url=%r realhost=%r', self.path, realhost)
                 response = http_util.request(self.command, self.path, payload, self.headers, realhost=realhost, crlf=common.GAE_CRLF)
             else:
                 response = http_util.request(self.command, self.path, payload, self.headers, crlf=common.GAE_CRLF)
