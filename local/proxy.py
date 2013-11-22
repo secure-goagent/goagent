@@ -1386,6 +1386,9 @@ class Common(object):
         self.GOOGLE_SITES = tuple(x for x in self.CONFIG.get(self.GAE_PROFILE, 'sites').split('|') if x)
         self.GOOGLE_FORCEHTTPS = tuple('http://'+x for x in self.CONFIG.get(self.GAE_PROFILE, 'forcehttps').split('|') if x)
         self.GOOGLE_WITHGAE = tuple(x for x in self.CONFIG.get(self.GAE_PROFILE, 'withgae').split('|') if x)
+        self.GOOGLE_USEFAKEHTTPS = self.CONFIG.getint(self.GAE_PROFILE, 'usefakehttps') if self.CONFIG.has_option(self.GAE_PROFILE, 'usefakehttps') else 0        
+        self.GOOGLE_FAKEHTTPS = tuple(x for x in (self.CONFIG.get(self.GAE_PROFILE, 'fakehttps') if self.GOOGLE_USEFAKEHTTPS==1 else '').split('|') if x)
+        self.GOOGLE_NOFAKEHTTPS = tuple(x for x in (self.CONFIG.get(self.GAE_PROFILE, 'nofakehttps') if self.GOOGLE_USEFAKEHTTPS==1 else '').split('|') if x)
 
         self.AUTORANGE_HOSTS = self.CONFIG.get('autorange', 'hosts').split('|')
         self.AUTORANGE_HOSTS_MATCH = [re.compile(fnmatch.translate(h)).match for h in self.AUTORANGE_HOSTS]
@@ -1865,7 +1868,6 @@ class GAEProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
     first_run_lock = threading.Lock()
     urlfetch = staticmethod(gae_urlfetch)
     normcookie = functools.partial(re.compile(', ([^ =]+(?:=|$))').sub, '\\r\\nSet-Cookie: \\1')
-    normattachment = functools.partial(re.compile(r'filename=(.+?)').sub, 'filename="\\1"')
 
     @staticmethod
     def resolve_google_iplist(google_hosts):
@@ -2046,6 +2048,8 @@ class GAEProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             logging.info('%s "FWD %s %s HTTP/1.1" %s %s', self.address_string(), self.command, self.path, response.status, response.getheader('Content-Length', '-'))
             if response.status in (400, 405):
                 common.GAE_CRLF = 0
+            if response.getheader('Set-Cookie'):
+                response_replace_header(response, 'Set-Cookie', self.normcookie(response.getheader('Set-Cookie')))
             self.wfile.write(('HTTP/1.1 %s\r\n%s\r\n' % (response.status, ''.join('%s: %s\r\n' % (k.title(), v) for k, v in response.getheaders() if k.title() != 'Transfer-Encoding'))))
             while 1:
                 data = response.read(8192)
@@ -2164,8 +2168,6 @@ class GAEProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
                         return rangefetch.fetch()
                     if response.getheader('Set-Cookie'):
                         response_replace_header(response, 'Set-Cookie', self.normcookie(response.getheader('Set-Cookie')))
-                    if response.getheader('Content-Disposition') and '"' not in response.getheader('Content-Disposition'):
-                        response_replace_header(response, 'Content-Disposition', self.normattachment(response.getheader('Content-Disposition')))
                     headers_data = 'HTTP/1.1 %s\r\n%s\r\n' % (response.status, ''.join('%s: %s\r\n' % (k.title(), v) for k, v in response.getheaders() if k.title() != 'Transfer-Encoding'))
                     logging.debug('headers_data=%s', headers_data)
                     #self.wfile.write(headers_data.encode() if bytes is not str else headers_data)
@@ -2219,11 +2221,11 @@ class GAEProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             if realhosts:
                 http_util.dns[host] = list(set(sum([socket.gethostbyname_ex(x)[-1] for x in realhosts.split('|')], [])))
             self.do_CONNECT_FWD()
-        elif host.endswith(common.GOOGLE_SITES) and not host.endswith(common.GOOGLE_WITHGAE):
+        elif host.endswith(common.GOOGLE_SITES) and not host.endswith(common.GOOGLE_WITHGAE) and (not host.endswith(common.GOOGLE_FAKEHTTPS) or host.endswith(common.GOOGLE_NOFAKEHTTPS)):
             http_util.dns[host] = common.GOOGLE_HOSTS
             self.do_CONNECT_FWD()
         else:
-            self.do_CONNECT_AGENT()
+            self.do_CONNECT_PROCESS()
 
     def do_CONNECT_FWD(self):
         """socket forward for http CONNECT command"""
@@ -2263,12 +2265,12 @@ class GAEProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             self.wfile.write(b'HTTP/1.1 200 OK\r\n\r\n')
             http_util.forward_socket(self.connection, remote, bufsize=self.bufsize)
 
-    def do_CONNECT_AGENT(self):
+    def do_CONNECT_PROCESS(self):
         """deploy fake cert to client"""
         host, _, port = self.path.rpartition(':')
         port = int(port)
         certfile = CertUtil.get_cert(host)
-        logging.info('%s "AGENT %s %s:%d HTTP/1.1" - -', self.address_string(), self.command, host, port)
+        logging.info('%s "PROCESS %s %s:%d HTTP/1.1" - -', self.address_string(), self.command, host, port)
         self.__realconnection = None
         self.wfile.write(b'HTTP/1.1 200 OK\r\n\r\n')
         try:
@@ -2401,7 +2403,7 @@ class PAASProxyHandler(GAEProxyHandler):
         self.__class__.do_HEAD = self.__class__.do_METHOD
         self.__class__.do_DELETE = self.__class__.do_METHOD
         self.__class__.do_OPTIONS = self.__class__.do_METHOD
-        self.__class__.do_CONNECT = GAEProxyHandler.do_CONNECT_AGENT
+        self.__class__.do_CONNECT = GAEProxyHandler.do_CONNECT_PROCESS
         self.setup()
 
     def do_METHOD(self):
