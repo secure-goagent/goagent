@@ -1621,10 +1621,10 @@ def gae_urlfetch(method, url, headers, payload, fetchserver, **kwargs):
         from Crypto.Random.random import StrongRandom
         rsakey = RSA.importKey(__RSA_KEY__.strip())
         rsakey = PKCS1_OAEP.new(rsakey)
-        rc4_cookie_key = base64.b64encode(read_random_bits(128))
-        rc4_payload_key = base64.b64encode(read_random_bits(128))
-        rc4_response_msg_key = base64.b64encode(read_random_bits(128))
-        rc4_response_fp_key = base64.b64encode(read_random_bits(128))
+        rc4_cookie_key = base64.b64encode(read_random_bits(256))
+        rc4_payload_key = base64.b64encode(read_random_bits(256))
+        rc4_response_msg_key = base64.b64encode(read_random_bits(256))
+        rc4_response_fp_key = base64.b64encode(read_random_bits(256))
         rc4_keys = rc4_cookie_key + '|' + rc4_payload_key + '|' + rc4_response_msg_key + '|' + rc4_response_fp_key
         request_headers['X-GOA-KEYS'] = base64.b64encode(rsakey.encrypt(rc4_keys))
     else:
