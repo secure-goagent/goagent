@@ -914,8 +914,7 @@ class HTTPUtil(object):
             self.dns[host] = iplist = list(set(iplist))
         return iplist
 
-    def create_connection(self, address, timeout=None, source_address=None, **kwargs):
-        connection_cache_key = kwargs.get('cache_key') or address
+    def create_connection(self, address, timeout=None, source_address=None):
         def _create_connection(address, timeout, queobj):
             sock = None
             try:
@@ -937,7 +936,7 @@ class HTTPUtil(object):
                 self.tcp_connection_time[address] = time.time() - start_time
                 # put ssl socket object to output queobj
                 queobj.put(sock)
-            except (socket.error, OSError) as e:
+            except (socket.error, ssl.SSLError, OSError) as e:
                 # any socket.error, put Excpetions to output queobj.
                 queobj.put(e)
                 # reset a large and random timeout to the address
@@ -945,20 +944,10 @@ class HTTPUtil(object):
                 # close tcp socket
                 if sock:
                     sock.close()
+
         def _close_connection(count, queobj):
-            for i in range(count):
-                sock = queobj.get()
-                if sock and not isinstance(sock, Exception):
-                    if i == 0:
-                        self.ssl_connection_cache[connection_cache_key].put((time.time(), sock))
-                    else:
-                        sock.close()
-        try:
-            ctime, sock = self.ssl_connection_cache[connection_cache_key].get_nowait()
-            if time.time() - ctime < 30:
-                return sock
-        except Queue.Empty:
-            pass
+            for _ in range(count):
+                queobj.get()
         host, port = address
         result = None
         addresses = [(x, port) for x in self.dns_resolve(host)]
@@ -984,8 +973,7 @@ class HTTPUtil(object):
                         # only output first error
                         logging.warning('create_connection to %s return %r, try again.', addrs, result)
 
-    def create_ssl_connection(self, address, timeout=None, source_address=None, **kwargs):
-        connection_cache_key = kwargs.get('cache_key') or address
+    def create_ssl_connection(self, address, timeout=None, source_address=None):
         def _create_ssl_connection(ipaddr, timeout, queobj):
             sock = None
             ssl_sock = None
@@ -1098,11 +1086,11 @@ class HTTPUtil(object):
                 sock = queobj.get()
                 if sock and not isinstance(sock, Exception):
                     if i == 0:
-                        self.ssl_connection_cache[connection_cache_key].put((time.time(), sock))
+                        self.ssl_connection_cache[address].put((time.time(), sock))
                     else:
                         sock.close()
         try:
-            ctime, sock = self.ssl_connection_cache[connection_cache_key].get_nowait()
+            ctime, sock = self.ssl_connection_cache[address].get_nowait()
             if time.time() - ctime < 30:
                 return sock
         except Queue.Empty:
@@ -1271,7 +1259,7 @@ class HTTPUtil(object):
             response = None
         return response
 
-    def request(self, method, url, payload=None, headers={}, realhost='', fullurl=False, bufsize=8192, crlf=None, return_sock=None, connection_cache_key=None):
+    def request(self, method, url, payload=None, headers={}, realhost='', fullurl=False, bufsize=8192, crlf=None, return_sock=None):
         scheme, netloc, path, _, query, _ = urlparse.urlparse(url)
         if netloc.rfind(':') <= netloc.rfind(']'):
             # no port number
@@ -1291,14 +1279,14 @@ class HTTPUtil(object):
             try:
                 if not self.proxy:
                     if scheme == 'https':
-                        ssl_sock = self.create_ssl_connection((realhost or host, port), self.max_timeout, cache_key=connection_cache_key)
+                        ssl_sock = self.create_ssl_connection((realhost or host, port), self.max_timeout)
                         if ssl_sock:
                             sock = ssl_sock.sock
                             del ssl_sock.sock
                         else:
                             raise socket.error('timed out', 'create_ssl_connection(%r,%r)' % (realhost or host, port))
                     else:
-                        sock = self.create_connection((realhost or host, port), self.max_timeout, cache_key=connection_cache_key)
+                        sock = self.create_connection((realhost or host, port), self.max_timeout)
                 else:
                     sock = self.create_connection_withproxy((realhost or host, port), port, self.max_timeout, proxy=self.proxy)
                     path = url
@@ -1652,7 +1640,7 @@ def gae_urlfetch(method, url, headers, payload, fetchserver, **kwargs):
         request_headers['Content-Length'] = str(len(payload))
     # post data
     need_crlf = 0 if common.GAE_MODE == 'https' else common.GAE_CRLF
-    response = http_util.request(request_method, fetchserver, payload, request_headers, crlf=need_crlf, connection_cache_key='*.appspot.com')
+    response = http_util.request(request_method, fetchserver, payload, request_headers, crlf=need_crlf)
     response.app_status = response.status
     response.app_options = response.getheader('X-GOA-Options', '')
     if response.status != 200:
@@ -2251,8 +2239,7 @@ class GAEProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             for i in range(5):
                 try:
                     timeout = 4
-                    connection_cache_key = '*.google.com' if host.endswith(common.GOOGLE_SITES) else ''
-                    remote = http_util.create_connection((host, port), timeout, cache_key=connection_cache_key)
+                    remote = http_util.create_connection((host, port), timeout)
                     if remote is not None and data:
                         remote.sendall(data)
                         break
