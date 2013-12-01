@@ -6,6 +6,7 @@
 __version__ = '3.0.8'
 __password__ = ''
 __hostsdeny__ = ()  # __hostsdeny__ = ('.youtube.com', '.youku.com')
+__content_type__ = 'image/gif'
 
 import sys
 import os
@@ -294,11 +295,11 @@ def gae_application(environ, start_response):
          response_headers['Content-Length'] = str(len(data))
     response_headers_data = zlib.compress('\n'.join('%s:%s' % (k.title(), v) for k, v in response_headers.items() if not k.startswith('x-google-')))[2:-4]
     if 'rc4' not in options:
-        start_response('200 OK', [('Content-Type', 'image/gif')])
+        start_response('200 OK', [('Content-Type', __content_type__)])
         yield struct.pack('!hh', int(response.status_code), len(response_headers_data))+response_headers_data
         yield data
     else:
-        start_response('200 OK', [('Content-Type', 'image/gif'), ('X-GOA-Options', 'rc4')])
+        start_response('200 OK', [('Content-Type', __content_type__), ('X-GOA-Options', 'rc4')])
         response_headers_data = rc4crypt(response_headers_data, rc4_response_msg_key)
         yield struct.pack('!hh', int(response.status_code), len(response_headers_data))
         data = rc4crypt(data, rc4_response_fp_key)
@@ -317,7 +318,7 @@ class LegacyHandler(object):
         self.start_response = start_response
         return self.process_request()
 
-    def send_response(self, status, headers, content, content_type='image/gif'):
+    def send_response(self, status, headers, content, content_type=__content_type__):
         headers['Content-Length'] = str(len(content))
         strheaders = '&'.join('%s=%s' % (k, v.encode('hex')) for k, v in headers.iteritems() if v)
         #logging.debug('response status=%s, headers=%s, content length=%d', status, headers, len(content))
@@ -520,7 +521,7 @@ def paas_application(environ, start_response):
             response = conn.getresponse()
 
             headers_data = zlib.compress('\n'.join('%s:%s' % (k.title(), v) for k, v in response.getheaders()))[2:-4]
-            start_response('200 OK', [('Content-Type', 'image/gif')])
+            start_response('200 OK', [('Content-Type', __content_type__)])
             yield struct.pack('!hh', int(response.status), len(headers_data))+headers_data
             while 1:
                 data = response.read(8192)
