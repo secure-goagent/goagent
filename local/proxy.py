@@ -42,6 +42,12 @@ import glob
 
 sys.path += glob.glob('%s/*.egg' % os.path.dirname(os.path.abspath(__file__)))
 
+sys.dont_write_bytecode = True
+try:
+    from key_config import __RSA_KEY__
+except (ImportError, SystemError):
+    __RSA_KEY__ = None
+
 try:
     import gevent
     import gevent.socket

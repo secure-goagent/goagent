@@ -8,6 +8,10 @@ __password__ = ''
 __hostsdeny__ = ()  # __hostsdeny__ = ('.youtube.com', '.youku.com')
 __content_type__ = 'image/gif'
 
+try:
+    from key_config import __RSA_KEY__
+except (ImportError, SystemError):
+    __RSA_KEY__ = None
 import sys
 import os
 import re
