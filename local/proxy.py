@@ -1710,7 +1710,6 @@ class XORFileObject(object):
         return self.__cipher.encrypt(self.__stream.read(size))
 
 
->>>>>>> 84cc7c565b8eef216766dc0b0fe3a537dd882cf1
 def gae_urlfetch(method, url, headers, payload, fetchserver, **kwargs):
     # deflate = lambda x:zlib.compress(x)[2:-4]
     if payload:
