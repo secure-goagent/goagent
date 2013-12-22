@@ -1402,6 +1402,7 @@ class Common(object):
         self.GAE_VALIDATE = self.CONFIG.getint('gae', 'validate')
         self.GAE_OBFUSCATE = self.CONFIG.getint('gae', 'obfuscate')
         self.GAE_OPTIONS = self.CONFIG.get('gae', 'options')
+        if len(self.GAE_APPIDS) > 50 : random.shuffle(self.GAE_APPIDS)
         self.GAE_FETCHSERVER = '%s://%s.appspot.com%s?' % (self.GAE_MODE, self.GAE_APPIDS[0], self.GAE_PATH)
 
         hosts_section, http_section = '%s/hosts' % self.GAE_PROFILE, '%s/http' % self.GAE_PROFILE
