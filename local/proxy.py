@@ -1416,10 +1416,11 @@ class Common(object):
 
         self.METHOD_REMATCH_MAP = collections.OrderedDict((re.compile(k).match, v) for k, v in self.CONFIG.items(hosts_section) if '\\' in k)
 
-        self.HTTP_WITHGAE = set(self.CONFIG.get(http_section, 'withgae').split('|'))
+        self.HTTP_WITHGAE = tuple(x for x in self.CONFIG.get(http_section, 'withgae').split('|') if x)
         self.HTTP_CRLFSITES = tuple(self.CONFIG.get(http_section, 'crlfsites').split('|'))
-        self.HTTP_FORCEHTTPS = set(self.CONFIG.get(http_section, 'forcehttps').split('|'))
-        self.HTTP_FAKEHTTPS = set(self.CONFIG.get(http_section, 'fakehttps').split('|'))
+        self.HTTP_FORCEHTTPS = tuple(self.CONFIG.get(http_section, 'forcehttps').split('|'))
+        self.HTTP_FAKEHTTPS = tuple(x for x in self.CONFIG.get(http_section, 'fakehttps').split('|') if x)
+        self.HTTP_NOFAKEHTTPS = tuple(x for x in (self.CONFIG.get(http_section, 'nofakehttps').split('|') if self.CONFIG.has_option(http_section, 'nofakehttps') else '' )if x)
 
         self.IPLIST_MAP = collections.OrderedDict((k, v.split('|')) for k, v in self.CONFIG.items('iplist'))
         self.IPLIST_MAP.update((k, [k]) for k, v in self.HOSTS_MAP.items() if k == v)
@@ -2099,9 +2100,9 @@ class GAEProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         self.url_parts = urlparse.urlparse(self.path)
         if common.USERAGENT_ENABLE:
             self.headers['User-Agent'] = common.USERAGENT_STRING
-        if host in common.HTTP_WITHGAE:
+        if host.endswith(common.HTTP_WITHGAE):
             return self.do_METHOD_PROCESS()
-        if host in common.HTTP_FORCEHTTPS and not self.headers.get('Referer', '').startswith('https://'):
+        if self.path.startswith(common.HTTP_FORCEHTTPS) and not self.headers.get('Referer', '').startswith('https://'):
             return self.wfile.write(('HTTP/1.1 301\r\nLocation: %s\r\n\r\n' % self.path.replace('http://', 'https://', 1)).encode())
         if self.command not in ('GET', 'POST', 'HEAD', 'PUT', 'DELETE', 'PATCH'):
             return self.do_METHOD_FWD()
@@ -2139,7 +2140,7 @@ class GAEProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             if response.status in (400, 405):
                 common.GAE_CRLF = 0
             if response.getheader('Set-Cookie'):
-                response_replace_header(response, 'Set-Cookie', self.normcookie(response.getheader('Set-Cookie')))
+                response.msg['Set-Cookie'] = self.normcookie(response.getheader('Set-Cookie'))
             self.wfile.write(('HTTP/1.1 %s\r\n%s\r\n' % (response.status, ''.join('%s: %s\r\n' % (k.title(), v) for k, v in response.getheaders() if k.title() != 'Transfer-Encoding'))))
             while 1:
                 data = response.read(8192)
@@ -2304,7 +2305,7 @@ class GAEProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
     def do_CONNECT(self):
         """handle CONNECT cmmand, socket forward or deploy a fake cert"""
         host, _, port = self.path.rpartition(':')
-        if host in common.HTTP_FAKEHTTPS or host in common.HTTP_WITHGAE:
+        if (host.endswith(common.HTTP_FAKEHTTPS) and not host.endswith(common.HTTP_NOFAKEHTTPS)) or host.endswith(common.HTTP_WITHGAE):
             return self.do_CONNECT_PROCESS()
         elif self.path in common.CONNECT_HOSTS_MAP or self.path.endswith(common.CONNECT_POSTFIX_ENDSWITH):
             return self.do_CONNECT_FWD()
