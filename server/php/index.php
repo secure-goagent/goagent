@@ -1,9 +1,12 @@
 <?php
 
+
 $__version__  = '3.1.2';
 $__password__ = '123456';
-$__timeout__  = 20;
+$__hostsdeny__ = array(); // $__hostsdeny__ = array('.youtube.com', '.youku.com');
 $__content_type__ = 'image/gif';
+$__use_curl__ = function_exists('curl_version');
+$__timeout__ = 20;
 $__content__ = '';
 
 
@@ -87,21 +90,29 @@ function echo_content($content) {
 }
 
 
-function header_function($ch, $header) {
+function curl_header_function($ch, $header) {
     global $__content__;
     if (!$__content__) {
-        header('Content-Type: ' . $__content_type__);
+        header('Content-Type: ' . $GLOBALS['__content_type__']);
     }
-    if (strncasecmp($header, 'Transfer-Encoding:', 18) != 0) {
+    $pos = strpos($header, ':');
+    if ($pos == false) {
         $__content__ .= $header;
+    } else {
+        $key = join('-', array_map('ucfirst', explode('-', substr($header, 0, $pos))));
+        if ($key != 'Transfer-Encoding') {
+            $__content__ .= $key . substr($header, $pos);
+        }
     }
     return strlen($header);
 }
 
 
-function write_function($ch, $content) {
+function curl_write_function($ch, $content) {
     global $__content__;
     if ($__content__) {
+        // for debug
+        // echo_content("HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\n");
         echo_content($__content__);
         $__content__ = '';
     }
@@ -109,7 +120,8 @@ function write_function($ch, $content) {
     return strlen($content);
 }
 
-function post()
+
+function post_with_curl()
 {
     list($method, $url, $headers, $kwargs, $body) = @decode_request(@file_get_contents('php://input'));
 
@@ -117,8 +129,20 @@ function post()
     if ($password) {
         if (!isset($kwargs['password']) || $password != $kwargs['password']) {
             header("HTTP/1.0 403 Forbidden");
-            print(message_html('403 Forbidden', 'Wrong Password'));
+            echo message_html('403 Forbidden', 'Wrong Password', 'please edit proxy.ini');
             exit(-1);
+        }
+    }
+
+    $hostsdeny = $GLOBALS['__hostsdeny__'];
+    if ($hostsdeny) {
+        $urlparts = parse_url($url);
+        $host = $urlparts['host'];
+        foreach ($hostsdeny as $pattern) {
+            if (substr($host, strlen($host)-strlen($pattern)) == $pattern) {
+                echo_content("HTTP/1.0 403\r\n\r\n" . message_html('403 Forbidden', "hostsdeny matched($host)",  $url));
+                exit(-1);
+            }
         }
     }
 
@@ -127,25 +151,16 @@ function post()
     }
     $headers['Connection'] = 'close';
 
+    $header_array = array();
+    foreach ($headers as $key => $value) {
+        if ($key) {
+            $header_array[] = join('-', array_map('ucfirst', explode('-', $key))).': '.$value;
+        }
+    }
+
     $timeout = $GLOBALS['__timeout__'];
 
     $curl_opt = array();
-
-    $curl_opt[CURLOPT_RETURNTRANSFER] = true;
-    $curl_opt[CURLOPT_BINARYTRANSFER] = true;
-
-    $curl_opt[CURLOPT_HEADER]         = false;
-    $curl_opt[CURLOPT_HEADERFUNCTION] = 'header_function';
-    $curl_opt[CURLOPT_WRITEFUNCTION]  = 'write_function';
-
-    $curl_opt[CURLOPT_FAILONERROR]    = true;
-    $curl_opt[CURLOPT_FOLLOWLOCATION] = false;
-
-    $curl_opt[CURLOPT_CONNECTTIMEOUT] = $timeout;
-    $curl_opt[CURLOPT_TIMEOUT]        = $timeout;
-
-    $curl_opt[CURLOPT_SSL_VERIFYPEER] = false;
-    $curl_opt[CURLOPT_SSL_VERIFYHOST] = false;
 
     switch (strtoupper($method)) {
         case 'HEAD':
@@ -167,13 +182,22 @@ function post()
             exit(-1);
     }
 
-    $header_array = array();
-    foreach ($headers as $key => $value) {
-        if ($key) {
-            $header_array[] = join('-', array_map('ucfirst', explode('-', $key))).': '.$value;
-        }
-    }
     $curl_opt[CURLOPT_HTTPHEADER] = $header_array;
+    $curl_opt[CURLOPT_RETURNTRANSFER] = true;
+    $curl_opt[CURLOPT_BINARYTRANSFER] = true;
+
+    $curl_opt[CURLOPT_HEADER]         = false;
+    $curl_opt[CURLOPT_HEADERFUNCTION] = 'curl_header_function';
+    $curl_opt[CURLOPT_WRITEFUNCTION]  = 'curl_write_function';
+
+    $curl_opt[CURLOPT_FAILONERROR]    = true;
+    $curl_opt[CURLOPT_FOLLOWLOCATION] = false;
+
+    $curl_opt[CURLOPT_CONNECTTIMEOUT] = $timeout;
+    $curl_opt[CURLOPT_TIMEOUT]        = $timeout;
+
+    $curl_opt[CURLOPT_SSL_VERIFYPEER] = false;
+    $curl_opt[CURLOPT_SSL_VERIFYHOST] = false;
 
     $ch = curl_init($url);
     curl_setopt_array($ch, $curl_opt);
@@ -186,6 +210,93 @@ function post()
         echo_content($content);
     }
     curl_close($ch);
+}
+
+
+function post()
+{
+    list($method, $url, $headers, $kwargs, $body) = @decode_request(@file_get_contents('php://input'));
+
+    $timeout = $GLOBALS['__timeout__'];
+    $password = $GLOBALS['__password__'];
+    if ($password) {
+        if (!isset($kwargs['password']) || $password != $kwargs['password']) {
+            header("HTTP/1.0 403 Forbidden");
+            echo message_html('403 Forbidden', 'Wrong Password', 'please edit proxy.ini');
+            exit(-1);
+        }
+    }
+
+    $hostsdeny = $GLOBALS['__hostsdeny__'];
+    if ($hostsdeny) {
+        $urlparts = parse_url($url);
+        $host = $urlparts['host'];
+        foreach ($hostsdeny as $pattern) {
+            if (substr($host, strlen($host)-strlen($pattern)) == $pattern) {
+                echo_content("HTTP/1.0 403\r\n\r\n" . message_html('403 Forbidden', "hostsdeny matched($host)",  $url));
+                exit(-1);
+            }
+        }
+    }
+
+    if ($body) {
+        $headers['Content-Length'] = strval(strlen($body));
+    }
+    $headers['Connection'] = 'close';
+
+    $header_data = '';
+    foreach ($headers as $key => $value) {
+        if ($key) {
+            $header_data .= join('-', array_map('ucfirst', explode('-', $key))).': '.$value."\r\n";
+        }
+    }
+
+    $options = array('http' => array(), 'ssl' => array());
+    $options['http']['method'] = $method;
+    $options['http']['header'] = $header_string;
+    if ($body) {
+        $options['http']['content'] = $body;
+    }
+    $options['http']['timeout'] = $timeout;
+    $options['http']['follow_location'] = false;
+    $options['ssl']['ciphers'] = 'ALL:@STRENGTH';
+    if (isset($kwargs['validate']) && intval($kwargs['validate'])) {
+        $options['ssl']['verify_peer'] = false;
+        $options['ssl']['capture_peer_cert'] = false;
+    }
+
+    $context = stream_context_create($options);
+    if ($context == false) {
+        echo_content("HTTP/1.0 502\r\n\r\n" . message_html('502 PHP urlfetch error', 'stream_context_create error', var_export($options, true)));
+        exit(-1);
+    }
+
+    $fp = @fopen($url, 'rb', false, $context);
+
+    $metadata = stream_get_meta_data($fp);
+    if ($metadata == false) {
+        echo_content("HTTP/1.0 502\r\n\r\n" . message_html('502 PHP urlfetch error', 'stream_get_meta_data error', var_export($options, true)));
+        exit(-1);
+    }
+
+    if (isset($metadata['wrapper_data']['headers']) && !$metadata['wrapper_data']['headers'] && $metadata['wrapper_type'] == 'cURL') {
+        echo_content("HTTP/1.0 502\r\n\r\n" . message_html('502 PHP urlfetch error', 'Wrong PHP Runtime, please recompile without –with-curlwrapper', var_export($metadata, true)));
+        exit(-1);
+    }
+
+    // for debug
+    // echo_content("HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\n");
+
+    echo_content(join("\r\n", $metadata['wrapper_data']) . "\r\n\r\n");
+
+    while (!feof($fp)) {
+        $content = fread($fp, 8192);
+        if (!$content) {
+            break;
+        }
+        echo_content($content);
+    }
+    fclose($fp);
 }
 
 
@@ -202,7 +313,11 @@ function get() {
 
 function main() {
     if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-        post();
+        if ($GLOBALS['__use_curl__']) {
+            post_with_curl();
+        } else {
+            post();
+        }
     } else {
         get();
     }
