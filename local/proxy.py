@@ -754,6 +754,7 @@ class DNSUtil(object):
                      '216.234.179.13',
                      '243.185.187.3',
                      '243.185.187.39'])
+    cndnsserver = ['114.114.114.114','114.114.115.115','114.114.114.119','114.114.115.119','114.114.114.110','114.114.115.110']
     max_retry = 3
     max_wait = 3
 
@@ -789,7 +790,7 @@ class DNSUtil(object):
             address_family = socket.AF_INET6 if ':' in dnsserver else socket.AF_INET
             sock = None
             try:
-                if i < DNSUtil.max_retry-1:
+                if i < DNSUtil.max_retry-1 and dnsserver in DNSUtil.cndnsserver and qname.endswith('.google.com'):
                     # UDP mode query
                     sock = socket.socket(family=address_family, type=socket.SOCK_DGRAM)
                     sock.settimeout(timeout)
@@ -816,7 +817,8 @@ class DNSUtil(object):
                     if data and not DNSUtil.is_bad_reply(data):
                         return data[2:]
                     else:
-                        logging.warning('DNSUtil._remote_resolve(dnsserver=%r, %r) return bad tcp data=%r', qname, dnsserver, data)
+                        if qname.endswith('.google.com'):
+                            logging.warning('DNSUtil._remote_resolve(dnsserver=%r, %r) return bad tcp data=%r', qname, dnsserver, data)
             except (socket.error, ssl.SSLError, OSError) as e:
                 if e.args[0] in (errno.ETIMEDOUT, 'timed out'):
                     continue
@@ -1508,9 +1510,9 @@ class Common(object):
                 except (socket.error, OSError):
                     need_resolve_remote += [host]
             if name != 'google_cn' and name.startswith('google_') and len(resolved_iplist) < 32:
-                logging.warning('local need_resolve_hosts=%s is too short, try remote_resolve', need_resolve_hosts)
+                logging.info('local need_resolve_hosts=%s is too short, try remote_resolve', need_resolve_hosts)
                 need_resolve_remote += [x for x in need_resolve_hosts if ':' not in x and not re.match(r'\d+\.\d+\.\d+\.\d+', x)]
-            dnsservers = ['114.114.114.114', '114.114.115.115']
+            dnsservers = ['114.114.114.114', '114.114.115.115','8.8.8.8','8.8.4.4','198.41.0.4','192.228.79.201','192.33.4.12','128.8.10.90','192.203.230.10','192.5.5.241','192.112.36.4','128.63.2.53','192.36.148.17','192.58.128.30','193.0.14.129','199.7.83.42','202.12.27.33']
             result_queue = Queue.Queue()
             for host in need_resolve_remote:
                 for dnsserver in dnsservers:
@@ -1976,11 +1978,15 @@ class LocalProxyServer(SocketServer.ThreadingTCPServer):
         """make ThreadingTCPServer happy"""
         exc_info = sys.exc_info()
         error = exc_info and len(exc_info) and exc_info[1]
-        if isinstance(error, NetWorkIOError) and 'bad write retry' in error.args[1]:
+        if len(error.args) > 1:
+            error_args = error.args[1]
+        else:
+            error_args = ''
+        if isinstance(error, NetWorkIOError) and 'bad write retry' in error_args:
             exc_info = error = None
         else:
             del exc_info, error
-            SocketServer.ThreadingTCPServer.handle_error(self, *args)
+            #SocketServer.ThreadingTCPServer.handle_error(self, *args)
 
 
 def expand_google_hk_iplist(domains, max_count=100):
