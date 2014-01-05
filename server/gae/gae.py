@@ -94,7 +94,7 @@ except ImportError:
 def application(environ, start_response):
     cookie = environ.get('HTTP_COOKIE', '')
     options = environ.get('HTTP_X_GOA_OPTIONS', '')
-    rc4_keys = environ.get('HTTP_X_GOA_KEYS', '')
+    crypt_keys = environ.get('HTTP_X_GOA_KEYS', '')
     if environ['REQUEST_METHOD'] == 'GET' and not cookie:
         if '204' in environ['QUERY_STRING']:
             start_response('204 No Content', [])
@@ -114,22 +114,22 @@ def application(environ, start_response):
     wsgi_input = environ['wsgi.input']
     input_data = wsgi_input.read()
     
-    if 'rc4' in options and rc4_keys and __RSA_KEY__:
+    if __RSA_KEY__:
         from Crypto.PublicKey import RSA
         from Crypto.Cipher import PKCS1_OAEP
         rsakey = RSA.importKey(__RSA_KEY__.strip())
         rsakey = PKCS1_OAEP.new(rsakey)
-        rc4_keys = rsakey.decrypt(base64.b64decode(rc4_keys))
-        rc4_keys = rc4_keys.split('|')
-        rc4_cookie_key = rc4_keys[0]
-        rc4_payload_key = rc4_keys[1]
-        rc4_response_msg_key = rc4_keys[2]
-        rc4_response_fp_key = rc4_keys[3]
+        crypt_keys = rsakey.decrypt(base64.b64decode(crypt_keys))
+        crypt_keys = crypt_keys.split('|')
+        crypt_cookie_key = crypt_keys[0]
+        crypt_payload_key = crypt_keys[1]
+        crypt_response_msg_key = crypt_keys[2]
+        crypt_response_fp_key = crypt_keys[3]
     else :
-        rc4_cookie_key = __password__
-        rc4_payload_key = __password__
-        rc4_response_msg_key = __password__
-        rc4_response_fp_key = __password__
+        crypt_cookie_key = __password__
+        crypt_payload_key = __password__
+        crypt_response_msg_key = __password__
+        crypt_response_fp_key = __password__
 
     try:
         if cookie:
@@ -137,11 +137,11 @@ def application(environ, start_response):
                 metadata = inflate(base64.b64decode(cookie))
                 payload = input_data or ''
             else:
-                metadata = inflate(rc4crypt(base64.b64decode(cookie), rc4_cookie_key))
-                payload = rc4crypt(input_data, rc4_payload_key) if input_data else ''
+                metadata = inflate(rc4crypt(base64.b64decode(cookie), crypt_cookie_key))
+                payload = rc4crypt(input_data, crypt_payload_key) if input_data else ''
         else:
             if 'rc4' in options:
-                input_data = rc4crypt(input_data, rc4_payload_key)
+                input_data = rc4crypt(input_data, crypt_payload_key)
             metadata_length, = struct.unpack('!h', input_data[:2])
             metadata = inflate(input_data[2:2+metadata_length])
             payload = input_data[2+metadata_length:]
@@ -266,9 +266,9 @@ def application(environ, start_response):
         yield data
     else:
         start_response('200 OK', [('Content-Type', __content_type__), ('X-GOA-Options', 'rc4')])
-        response_headers_data = rc4crypt(response_headers_data, rc4_response_msg_key)
+        response_headers_data = rc4crypt(response_headers_data, crypt_response_msg_key)
         yield struct.pack('!hh', int(response.status_code), len(response_headers_data))
-        data = rc4crypt(data, rc4_response_fp_key)
+        data = rc4crypt(data, crypt_response_fp_key)
         yield response_headers_data
         yield data
 

@@ -827,7 +827,7 @@ class DNSUtil(object):
             address_family = socket.AF_INET6 if ':' in dnsserver else socket.AF_INET
             sock = None
             try:
-                if i < DNSUtil.max_retry-1 and dnsserver in DNSUtil.cndnsserver and qname.endswith('.google.com'):
+                if i < DNSUtil.max_retry-1 and dnsserver in DNSUtil.cndnsserver:
                     # UDP mode query
                     sock = socket.socket(family=address_family, type=socket.SOCK_DGRAM)
                     sock.settimeout(timeout)
@@ -837,8 +837,9 @@ class DNSUtil(object):
                         if data and not DNSUtil.is_bad_reply(data):
                             return data[2:]
                         else:
-                            logging.warning('DNSUtil._remote_resolve(dnsserver=%r, %r) return poisoned udp data=%r', qname, dnsserver, data)
-                else:
+                            if qname.endswith('.google.com'):
+                                logging.warning('DNSUtil._remote_resolve(dnsserver=%r, %r) return poisoned udp data=%r', qname, dnsserver, data)
+                elif dnsserver not in DNSUtil.cndnsserver:
                     # TCP mode query
                     sock = socket.socket(family=address_family, type=socket.SOCK_STREAM)
                     sock.settimeout(timeout)
@@ -854,8 +855,9 @@ class DNSUtil(object):
                     if data and not DNSUtil.is_bad_reply(data):
                         return data[2:]
                     else:
-                        if qname.endswith('.google.com'):
-                            logging.warning('DNSUtil._remote_resolve(dnsserver=%r, %r) return bad tcp data=%r', qname, dnsserver, data)
+                        logging.warning('DNSUtil._remote_resolve(dnsserver=%r, %r) return bad tcp data=%r', qname, dnsserver, data)
+                else:
+                    break
             except (socket.error, ssl.SSLError, OSError) as e:
                 if e.args[0] in (errno.ETIMEDOUT, 'timed out'):
                     continue
@@ -1743,28 +1745,28 @@ def gae_urlfetch(method, url, headers, payload, fetchserver, **kwargs):
     # prepare GAE request
     request_method = 'POST'
     request_headers = {}
-    if 'rc4' in common.GAE_OPTIONS and __RSA_KEY__:
+    if 'rsa' in common.GAE_OPTIONS and __RSA_KEY__:
         from Crypto.PublicKey import RSA
         from Crypto.Cipher import PKCS1_OAEP
         from Crypto.Random.random import StrongRandom
         rsakey = RSA.importKey(__RSA_KEY__.strip())
         rsakey = PKCS1_OAEP.new(rsakey)
-        rc4_cookie_key = base64.b64encode(read_random_bits(256))
-        rc4_payload_key = base64.b64encode(read_random_bits(256))
-        rc4_response_msg_key = base64.b64encode(read_random_bits(256))
-        rc4_response_fp_key = base64.b64encode(read_random_bits(256))
-        rc4_keys = rc4_cookie_key + '|' + rc4_payload_key + '|' + rc4_response_msg_key + '|' + rc4_response_fp_key
-        request_headers['X-GOA-KEYS'] = base64.b64encode(rsakey.encrypt(rc4_keys))
+        crypt_cookie_key = base64.b64encode(read_random_bits(256))
+        crypt_payload_key = base64.b64encode(read_random_bits(256))
+        crypt_response_msg_key = base64.b64encode(read_random_bits(256))
+        crypt_response_fp_key = base64.b64encode(read_random_bits(256))
+        crypt_keys = crypt_cookie_key + '|' + crypt_payload_key + '|' + crypt_response_msg_key + '|' + crypt_response_fp_key
+        request_headers['X-GOA-KEYS'] = base64.b64encode(rsakey.encrypt(crypt_keys))
     else:
-        rc4_cookie_key = kwargs.get('password')
-        rc4_payload_key = kwargs.get('password')
-        rc4_response_msg_key = kwargs.get('password')
+        crypt_cookie_key = kwargs.get('password')
+        crypt_payload_key = kwargs.get('password')
+        crypt_response_msg_key = kwargs.get('password')
         rc4_response_fp_key = kwargs.get('password')
     if common.GAE_OBFUSCATE:
         if 'rc4' in common.GAE_OPTIONS:
             request_headers['X-GOA-Options'] = 'rc4'
-            cookie = base64.b64encode(rc4crypt(zlib.compress(metadata)[2:-4], rc4_cookie_key)).strip()
-            payload = rc4crypt(payload, rc4_payload_key)
+            cookie = base64.b64encode(rc4crypt(zlib.compress(metadata)[2:-4], crypt_cookie_key)).strip()
+            payload = rc4crypt(payload, crypt_payload_key)
         else:
             cookie = base64.b64encode(zlib.compress(metadata)[2:-4]).strip()
         request_headers['Cookie'] = cookie
@@ -1777,7 +1779,7 @@ def gae_urlfetch(method, url, headers, payload, fetchserver, **kwargs):
         payload = '%s%s%s' % (struct.pack('!h', len(metadata)), metadata, payload)
         if 'rc4' in common.GAE_OPTIONS:
             request_headers['X-GOA-Options'] = 'rc4'
-            payload = rc4crypt(payload, rc4_payload_key)
+            payload = rc4crypt(payload, crypt_payload_key)
         request_headers['Content-Length'] = str(len(payload))
     # post data
     need_crlf = 0 if common.GAE_MODE == 'https' else 1
@@ -1809,9 +1811,9 @@ def gae_urlfetch(method, url, headers, payload, fetchserver, **kwargs):
     if 'rc4' not in response.app_options:
         response.msg = httplib.HTTPMessage(io.BytesIO(zlib.decompress(data, -zlib.MAX_WBITS)))
     else:
-        response.msg = httplib.HTTPMessage(io.BytesIO(zlib.decompress(rc4crypt(data, rc4_response_msg_key), -zlib.MAX_WBITS)))
-        if rc4_response_fp_key and response.fp:
-            response.fp = RC4FileObject(response.fp, rc4_response_fp_key)
+        response.msg = httplib.HTTPMessage(io.BytesIO(zlib.decompress(rc4crypt(data, crypt_response_msg_key), -zlib.MAX_WBITS)))
+        if crypt_response_fp_key and response.fp:
+            response.fp = RC4FileObject(response.fp, crypt_response_fp_key)
     return response
 
 
@@ -2748,11 +2750,11 @@ class PACProxyHandler(GAEProxyHandler):
             if host in self.localhosts and int(port) == common.PAC_PORT:
                 return self.do_METHOD_BLACKHOLE()
             elif host in self.localhosts and int(port) == common.LISTEN_PORT:
-                return GAEProxyHandler.do_METHOD_AGENT(self)
+                return GAEProxyHandler.do_METHOD_PROCESS(self)
             else:
                 return self.do_METHOD_FWD()
         else:
-            GAEProxyHandler.do_METHOD_AGENT(self)
+            GAEProxyHandler.do_METHOD_PROCESS(self)
 
 
 class DNSServer(gevent.server.DatagramServer if gevent and hasattr(gevent.server, 'DatagramServer') else object):
