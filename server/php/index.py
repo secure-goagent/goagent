@@ -65,11 +65,18 @@ def message_html(title, banner, detail=''):
 class XORCipher(object):
     """XOR Cipher Class"""
     def __init__(self, key):
-        assert isinstance(key, basestring) and key
         self.__key_gen = itertools.cycle([ord(x) for x in key]).next
+        self.__key_xor = lambda s: ''.join(chr(ord(x) ^ self.__key_gen()) for x in s)
+        if len(key) == 1:
+            try:
+                from Crypto.Util.strxor import strxor_c
+                c = ord(key)
+                self.__key_xor = lambda s: strxor_c(s, c)
+            except ImportError:
+                sys.stderr.write('Load Crypto.Util.strxor Failed, Use Pure Python Instead.\n')
 
     def encrypt(self, data):
-        return ''.join(chr(ord(x) ^ self.__key_gen()) for x in data)
+        return self.__key_xor(data)
 
 
 def decode_request(data):
@@ -88,8 +95,7 @@ def decode_request(data):
     return method, url, headers, kwargs, body
 
 
-QUEUE_MODULE = __import__('gevent.queue', fromlist=['.']) if 'gevent.wsi' in sys.modules else Queue
-HTTP_CONNECTION_CACHE = collections.defaultdict(QUEUE_MODULE.PriorityQueue)
+HTTP_CONNECTION_CACHE = collections.defaultdict(Queue.PriorityQueue)
 
 def application(environ, start_response):
     if environ['REQUEST_METHOD'] == 'GET':
@@ -137,18 +143,27 @@ def application(environ, start_response):
             except Exception as e:
                 if i == fetchmax - 1:
                     raise
-        start_response('200 OK', [('Content-Type', __content_type__)])
+        need_encrypt = not response.getheader('Content-Type', '').startswith(('audio/', 'image/', 'video/', 'application/octet-stream'))
+        start_response('200 OK', [('Content-Type', __content_type__ if need_encrypt else 'image/x-png')])
         header_sent = True
         if response.getheader('Set-Cookie'):
             response.msg['Set-Cookie'] = normcookie(response.getheader('Set-Cookie'))
-        yield cipher.encrypt('HTTP/1.1 %s\r\n%s\r\n' % (response.status, ''.join('%s: %s\r\n' % (k.title(), v) for k, v in response.getheaders() if k.title() != 'Transfer-Encoding')))
+        content = 'HTTP/1.1 %s %s\r\n%s\r\n' % (response.status, httplib.responses.get(response.status, 'Unknown'), ''.join('%s: %s\r\n' % (k.title(), v) for k, v in response.getheaders() if k.title() != 'Transfer-Encoding'))
+        if need_encrypt:
+            content = cipher.encrypt(content)
+        yield content
+        # bufsize = 32768 if int(response.getheader('Content-Length', 0)) > 512*1024 else 8192
+        bufsize = 8192
         while True:
-            data = response.read(8192)
+            data = response.read(bufsize)
             if not data:
                 response.close()
-                HTTP_CONNECTION_CACHE[(scheme, netloc)].put((time.time(), connection))
+                if connection.sock:
+                    HTTP_CONNECTION_CACHE[(scheme, netloc)].put((time.time(), connection))
                 return
-            yield cipher.encrypt(data)
+            if need_encrypt:
+                data = cipher.encrypt(data)
+            yield data
     except Exception as e:
         import traceback
         if not header_sent:
@@ -171,17 +186,19 @@ except ImportError:
 
 
 def run_wsgi_app(address, app):
-    if 'gevent' in sys.modules:
-        from gevent.wsgi import WSGIServer
-        return WSGIServer(address, app).serve_forever()
-    else:
-        from gunicorn.app.base import Application
-        class GunicornApplication(Application):
+    try:
+        from gunicorn.app.wsgiapp import WSGIApplication
+        class GunicornApplication(WSGIApplication):
             def init(self, parser, opts, args):
-                return {'bind': '%s:%d' % address}
+                return {'bind': '%s:%d' % (address[0], int(address[1])),
+                        'workers': 2,
+                        'worker_class': 'gevent'}
             def load(self):
                 return application
         GunicornApplication().run()
+    except ImportError:
+        from gevent.wsgi import WSGIServer
+        WSGIServer(address, app).serve_forever()
 
 
 if __name__ == '__main__':

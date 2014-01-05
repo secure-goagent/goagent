@@ -91,22 +91,6 @@ except ImportError:
             return ''.join(out)
 
 
-def rc4crypt(data, key):
-    return RC4Cipher(key).encrypt(data) if key else data
-
-
-class RC4FileObject(object):
-    """fileobj for rc4"""
-    def __init__(self, stream, key):
-        self.__stream = stream
-        self.__cipher = RC4Cipher(key) if key else lambda x:x
-    def __getattr__(self, attr):
-        if attr not in ('__stream', '__cipher'):
-            return getattr(self.__stream, attr)
-    def read(self, size=-1):
-        return self.__cipher.encrypt(self.__stream.read(size))
-
-
 def application(environ, start_response):
     cookie = environ.get('HTTP_COOKIE', '')
     options = environ.get('HTTP_X_GOA_OPTIONS', '')
@@ -123,7 +107,10 @@ def application(environ, start_response):
             yield html.encode('utf8')
         raise StopIteration
 
-    # inflate = lambda x:zlib.decompress(x, -zlib.MAX_WBITS)
+    inflate = lambda x: zlib.decompress(x, -zlib.MAX_WBITS)
+    deflate = lambda x: zlib.compress(x)[2:-4]
+    rc4crypt = lambda s, k: RC4Cipher(k).encrypt(s) if k else s
+
     wsgi_input = environ['wsgi.input']
     input_data = wsgi_input.read()
     
@@ -147,16 +134,16 @@ def application(environ, start_response):
     try:
         if cookie:
             if 'rc4' not in options:
-                metadata = zlib.decompress(base64.b64decode(cookie), -zlib.MAX_WBITS)
+                metadata = inflate(base64.b64decode(cookie))
                 payload = input_data or ''
             else:
-                metadata = zlib.decompress(rc4crypt(base64.b64decode(cookie), rc4_cookie_key), -zlib.MAX_WBITS)
+                metadata = inflate(rc4crypt(base64.b64decode(cookie), rc4_cookie_key))
                 payload = rc4crypt(input_data, rc4_payload_key) if input_data else ''
         else:
             if 'rc4' in options:
                 input_data = rc4crypt(input_data, rc4_payload_key)
             metadata_length, = struct.unpack('!h', input_data[:2])
-            metadata = zlib.decompress(input_data[2:2+metadata_length], -zlib.MAX_WBITS)
+            metadata = inflate(input_data[2:2+metadata_length])
             payload = input_data[2+metadata_length:]
         headers = dict(x.split(':', 1) for x in metadata.splitlines() if x)
         method = headers.pop('G-Method')
@@ -172,7 +159,7 @@ def application(environ, start_response):
 
     if 'Content-Encoding' in headers:
         if headers['Content-Encoding'] == 'deflate':
-            payload = zlib.decompress(payload, -zlib.MAX_WBITS)
+            payload = inflate(payload)
             headers['Content-Length'] = str(len(payload))
             del headers['Content-Encoding']
 
@@ -269,10 +256,10 @@ def application(environ, start_response):
             data = dataio.getvalue()
         elif 'deflate' in accept_encoding:
             response_headers['Content-Encoding'] = 'deflate'
-            data = zlib.compress(data)[2:-4]
+            data = deflate(data)
     if data:
         response_headers['Content-Length'] = str(len(data))
-    response_headers_data = zlib.compress('\n'.join('%s:%s' % (k.title(), v) for k, v in response_headers.items() if not k.startswith('x-google-')))[2:-4]
+    response_headers_data = deflate('\n'.join('%s:%s' % (k.title(), v) for k, v in response_headers.items() if not k.startswith('x-google-')))
     if 'rc4' not in options or content_type.startswith(('audio/', 'image/', 'video/')):
         start_response('200 OK', [('Content-Type', __content_type__)])
         yield struct.pack('!hh', int(response.status_code), len(response_headers_data))+response_headers_data
