@@ -125,6 +125,7 @@ def application(environ, start_response):
         crypt_payload_key = crypt_keys[1]
         crypt_response_msg_key = crypt_keys[2]
         crypt_response_fp_key = crypt_keys[3]
+        options = 'rc4'
     else :
         crypt_cookie_key = __password__
         crypt_payload_key = __password__
