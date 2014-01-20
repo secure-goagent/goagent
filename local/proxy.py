@@ -1462,22 +1462,11 @@ class Common(object):
         self.PHP_USEHOSTS = self.CONFIG.getint('php', 'usehosts')
 
         self.PROXY_ENABLE = self.CONFIG.getint('proxy', 'enable')
-        self.PROXY_AUTODETECT = self.CONFIG.getint('proxy', 'autodetect') if self.CONFIG.has_option('proxy', 'autodetect') else 0
         self.PROXY_HOST = self.CONFIG.get('proxy', 'host')
         self.PROXY_PORT = self.CONFIG.getint('proxy', 'port')
         self.PROXY_USERNAME = self.CONFIG.get('proxy', 'username')
         self.PROXY_PASSWROD = self.CONFIG.get('proxy', 'password')
 
-        if not self.PROXY_ENABLE and self.PROXY_AUTODETECT:
-            system_proxy = ProxyUtil.get_system_proxy()
-            if system_proxy and self.LISTEN_IP not in system_proxy:
-                _, username, password, address = ProxyUtil.parse_proxy(system_proxy)
-                proxyhost, _, proxyport = address.rpartition(':')
-                self.PROXY_ENABLE = 1
-                self.PROXY_USERNAME = username
-                self.PROXY_PASSWROD = password
-                self.PROXY_HOST = proxyhost
-                self.PROXY_PORT = int(proxyport)
         if self.PROXY_ENABLE:
             self.GAE_MODE = 'https'
             self.proxy = 'https://%s:%s@%s:%d' % (self.PROXY_USERNAME or '', self.PROXY_PASSWROD or '', self.PROXY_HOST, self.PROXY_PORT)
