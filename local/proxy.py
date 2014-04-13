@@ -1612,7 +1612,8 @@ class Common(object):
         self.CONFIG = ConfigParser.ConfigParser()
         self.CONFIG_FILENAME = os.path.splitext(os.path.abspath(__file__))[0]+'.ini'
         self.CONFIG_USER_FILENAME = re.sub(r'\.ini$', '.user.ini', self.CONFIG_FILENAME)
-        self.CONFIG.read([self.CONFIG_FILENAME, self.CONFIG_USER_FILENAME])
+        self.CONFIG_MY_FILENAME = re.sub(r'\.ini$', '.my.ini', self.CONFIG_FILENAME)
+        self.CONFIG.read([self.CONFIG_FILENAME, self.CONFIG_USER_FILENAME, self.CONFIG_MY_FILENAME])
 
         for key, value in os.environ.items():
             m = re.match(r'^%s([A-Z]+)_([A-Z\_\-]+)$' % self.ENV_CONFIG_PREFIX, key)
