@@ -1045,7 +1045,7 @@ class SimpleProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
                 if not headers_sent and not raw_response:
                     logging.info('%s "URL %s %s %s" %s %s', self.address_string(), method, url, self.protocol_version, response.status, response.getheader('Content-Length', '-'))
                     if response.status == 206:
-                        return self.RANGEFETCH(self, response, fetchservers, **kwargs)
+                        return self.RANGEFETCH(response, fetchservers, **kwargs)
                     self.send_response(response.status)
                     for key, value in response.getheaders():
                         self.send_header(key, value)
@@ -1993,11 +1993,11 @@ class WithGAEFilter(BaseProxyHandlerFilter):
                 kwargs['options'] = ''
                 kwargs['rsa_key'] = None
             fetchservers = ['%s://%s.appspot.com%s' % (common.GAE_MODE, x, common.GAE_PATH) for x in common.GAE_APPIDS]
-            if 'googlevideo.com' in self.path:
+            if 'googlevideo.com' in handler.path:
                 kwargs['password'] = common.RANGEFETCH_PASSWORD
                 kwargs['options'] = common.RANGEFETCH_OPTIONS
                 kwargs['rsa_key'] = __RANGEFETCH_RSA_KEY__
-                fetchservers = ['%s://%s.appspot.com%s' % (common.GAE_MODE, x, common.RANGEFETCH_PATH) for x in common.RANGEFETCH_APPIDS[i]]
+                fetchservers = ['%s://%s.appspot.com%s' % (common.GAE_MODE, x, common.RANGEFETCH_PATH) for x in common.RANGEFETCH_APPIDS]
             return [handler.URLFETCH, fetchservers, common.FETCHMAX_LOCAL, False, kwargs]
 
 
@@ -2145,11 +2145,11 @@ class GAEFetchFilter(BaseProxyHandlerFilter):
                 kwargs['options'] = ''
                 kwargs['rsa_key'] = None
             fetchservers = ['%s://%s.appspot.com%s' % (common.GAE_MODE, x, common.GAE_PATH) for x in common.GAE_APPIDS]
-            if 'googlevideo.com' in self.path:
+            if 'googlevideo.com' in handler.path:
                 kwargs['password'] = common.RANGEFETCH_PASSWORD
                 kwargs['options'] = common.RANGEFETCH_OPTIONS
                 kwargs['rsa_key'] = __RANGEFETCH_RSA_KEY__
-                fetchservers = ['%s://%s.appspot.com%s' % (common.GAE_MODE, x, common.RANGEFETCH_PATH) for x in common.RANGEFETCH_APPIDS[i]]
+                fetchservers = ['%s://%s.appspot.com%s' % (common.GAE_MODE, x, common.RANGEFETCH_PATH) for x in common.RANGEFETCH_APPIDS]
             return [handler.URLFETCH, fetchservers, common.FETCHMAX_LOCAL, False, kwargs]
 
 
@@ -2273,7 +2273,7 @@ class GAEProxyHandler(AdvancedProxyHandler):
         kwargs['password'] = common.RANGEFETCH_PASSWORD
         kwargs['options'] = common.RANGEFETCH_OPTIONS
         kwargs['rsa_key'] = __RANGEFETCH_RSA_KEY__
-        fetchservers = ['%s://%s.appspot.com%s' % (common.GAE_MODE, x, common.RANGEFETCH_PATH) for x in common.RANGEFETCH_APPIDS[i]]
+        fetchservers = ['%s://%s.appspot.com%s' % (common.GAE_MODE, x, common.RANGEFETCH_PATH) for x in common.RANGEFETCH_APPIDS]
         return RangeFetch(self, response, fetchservers, **kwargs).fetch()
 
 class PHPFetchFilter(BaseProxyHandlerFilter):
