@@ -2265,7 +2265,7 @@ class GAEProxyHandler(AdvancedProxyHandler):
             response.msg = httplib.HTTPMessage(io.BytesIO(zlib.decompress(data, -zlib.MAX_WBITS)))
         else:
             response.msg = httplib.HTTPMessage(io.BytesIO(zlib.decompress(rc4crypt(data, crypt_response_msg_key), -zlib.MAX_WBITS)))
-            if kwargs.get('password') and response.fp:
+            if crypt_response_fp_key and response.fp:
                 response.fp = CipherFileObject(response.fp, RC4Cipher(crypt_response_fp_key))
         return response
 
