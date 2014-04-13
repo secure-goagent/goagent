@@ -1674,7 +1674,8 @@ class Common(object):
         self.PAC_IP = self.CONFIG.get('pac', 'ip')
         self.PAC_PORT = self.CONFIG.getint('pac', 'port')
         self.PAC_FILE = self.CONFIG.get('pac', 'file').lstrip('/')
-        self.PAC_GFWLIST = self.CONFIG.get('pac', 'gfwlist')
+        self.PAC_WHITELIST = self.CONFIG.has_option('pac', 'whitelist')
+        self.PAC_GFWLIST = self.CONFIG.get('pac', 'whitelist') if self.PAC_WHITELIST else self.CONFIG.get('pac', 'gfwlist')
         self.PAC_ADBLOCK = self.CONFIG.get('pac', 'adblock') if self.CONFIG.has_option('pac', 'adblock') else ''
         self.PAC_EXPIRED = self.CONFIG.getint('pac', 'expired')
 
@@ -2435,11 +2436,18 @@ class PacUtil(object):
         try:
             logging.info('try download %r to update_pacfile(%r)', common.PAC_GFWLIST, filename)
             autoproxy_content = base64.b64decode(opener.open(common.PAC_GFWLIST).read())
-            logging.info('%r downloaded, try convert it with autoproxy2pac_lite', common.PAC_GFWLIST)
-            if 'gevent' in sys.modules and time.sleep is getattr(sys.modules['gevent'], 'sleep', None) and hasattr(gevent.get_hub(), 'threadpool'):
-                jsrule = gevent.get_hub().threadpool.apply_e(Exception, PacUtil.autoproxy2pac_lite, (autoproxy_content, 'FindProxyForURLByAutoProxy', autoproxy, default))
+            if common.PAC_WHITELIST:
+                logging.info('%r downloaded, try convert it with autoproxy2pac_whitelist', common.PAC_GFWLIST)
+                if 'gevent' in sys.modules and time.sleep is getattr(sys.modules['gevent'], 'sleep', None) and hasattr(gevent.get_hub(), 'threadpool'):
+                    jsrule = gevent.get_hub().threadpool.apply_e(Exception, PacUtil.autoproxy2pac_whitelist, (autoproxy_content, 'FindProxyForURLByAutoProxy', autoproxy, default))
+                else:
+                    jsrule = PacUtil.autoproxy2pac_lite(autoproxy_content, 'FindProxyForURLByAutoProxy', autoproxy, default)
             else:
-                jsrule = PacUtil.autoproxy2pac_lite(autoproxy_content, 'FindProxyForURLByAutoProxy', autoproxy, default)
+                logging.info('%r downloaded, try convert it with autoproxy2pac_lite', common.PAC_GFWLIST)
+                if 'gevent' in sys.modules and time.sleep is getattr(sys.modules['gevent'], 'sleep', None) and hasattr(gevent.get_hub(), 'threadpool'):
+                    jsrule = gevent.get_hub().threadpool.apply_e(Exception, PacUtil.autoproxy2pac_lite, (autoproxy_content, 'FindProxyForURLByAutoProxy', autoproxy, default))
+                else:
+                    jsrule = PacUtil.autoproxy2pac_lite(autoproxy_content, 'FindProxyForURLByAutoProxy', autoproxy, default)
             content += '\r\n' + jsrule + '\r\n'
             logging.info('%r downloaded and parsed', common.PAC_GFWLIST)
         except Exception as e:
@@ -2482,6 +2490,40 @@ class PacUtil(object):
                 else:
                     jsLines.insert(0, jsLine)
         function = 'function %s(url, host) {\r\n%s\r\n%sreturn "%s";\r\n}' % (func_name, '\n'.join(jsLines), ' '*indent, default)
+        return function
+        
+    @staticmethod
+    def autoproxy2pac_whitelist(content, func_name='FindProxyForURLByAutoProxy', proxy='127.0.0.1:8087', default='DIRECT', indent=4):
+        """Autoproxy to Pac, based on https://github.com/iamamac/autoproxy2pac"""
+        jsLines = []
+        for line in content.splitlines()[1:]:
+            if line and not line.startswith("!"):
+                use_proxy = True
+                if line.startswith("@@"):
+                    line = line[2:]
+                    use_proxy = False
+                return_proxy = 'PROXY %s' % proxy if use_proxy else default
+                if line.startswith('/') and line.endswith('/'):
+                    jsLine = 'if (/%s/i.test(url)) return "%s";' % (line[1:-1], return_proxy)
+                elif line.startswith('||'):
+                    domain = line[2:].lstrip('.')
+                    if len(jsLines) > 0 and ('host.indexOf(".%s") >= 0' % domain in jsLines[-1] or 'host.indexOf("%s") >= 0' % domain in jsLines[-1]):
+                        jsLines.pop()
+                    jsLine = 'if (dnsDomainIs(host, ".%s") || host == "%s") return "%s";' % (domain, domain, return_proxy)
+                elif line.startswith('|'):
+                    jsLine = 'if (url.indexOf("%s") == 0) return "%s";' % (line[1:], return_proxy)
+                elif '*' in line:
+                    jsLine = 'if (shExpMatch(url, "*%s*")) return "%s";' % (line.strip('*'), return_proxy)
+                elif '/' not in line:
+                    jsLine = 'if (host.indexOf("%s") >= 0) return "%s";' % (line, return_proxy)
+                else:
+                    jsLine = 'if (url.indexOf("%s") >= 0) return "%s";' % (line, return_proxy)
+                jsLine = ' ' * indent + jsLine
+                if use_proxy:
+                    jsLines.append(jsLine)
+                else:
+                    jsLines.insert(0, jsLine)
+        function = 'function %s(url, host) {\r\n%s\r\n%sreturn "%s";\r\n}' % (func_name, '\n'.join(jsLines), ' '*indent, 'PROXY %s' % proxy)
         return function
 
     @staticmethod
