@@ -48,6 +48,15 @@ sys.dont_write_bytecode = True
 sys.path += glob.glob('%s/*.egg' % os.path.dirname(os.path.abspath(__file__)))
 
 try:
+    from key_config import __RSA_KEY__
+except (ImportError, SystemError):
+    __RSA_KEY__ = None
+try:
+    from key_config import __RANGEFETCH_RSA_KEY__
+except (ImportError, SystemError):
+    __RANGEFETCH_RSA_KEY__ = __RSA_KEY__
+
+try:
     import gevent
     import gevent.socket
     import gevent.server
@@ -1036,7 +1045,7 @@ class SimpleProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
                 if not headers_sent and not raw_response:
                     logging.info('%s "URL %s %s %s" %s %s', self.address_string(), method, url, self.protocol_version, response.status, response.getheader('Content-Length', '-'))
                     if response.status == 206:
-                        return RangeFetch(self, response, fetchservers, **kwargs).fetch()
+                        return self.RANGEFETCH(self, response, fetchservers, **kwargs)
                     self.send_response(response.status)
                     for key, value in response.getheaders():
                         self.send_header(key, value)
@@ -1079,6 +1088,9 @@ class SimpleProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         if len(errors) == max_retry:
             content = message_html('502 URLFetch failed', 'Local URLFetch %r failed' % url, str(errors))
             return self.MOCK(502, {'Content-Type': 'text/html'}, content)
+            
+        def RANGEFETCH(self, response, fetchservers, **kwargs):
+            return RangeFetch(self, response, fetchservers, **kwargs).fetch()
 
     def do_METHOD(self):
         if self.command == 'CONNECT':
@@ -1638,6 +1650,18 @@ class Common(object):
         self.GAE_OPTIONS = self.CONFIG.get('gae', 'options')
         self.GAE_REGIONS = frozenset(x.upper() for x in self.CONFIG.get('gae', 'regions').split('|') if x.strip())
 
+        if self.CONFIG.has_section('rangefetch'):
+            self.RANGEFETCH_APPIDS = re.findall(r'[\w\-\.]+', self.CONFIG.get('rangefetch', 'appid').replace('.appspot.com', '')) if self.CONFIG.has_option('rangefetch', 'appid') else self.GAE_APPIDS
+            if len(self.RANGEFETCH_APPIDS) > 50 : random.shuffle(self.RANGEFETCH_APPIDS)
+            self.RANGEFETCH_PASSWORD = self.CONFIG.get('rangefetch', 'password').strip() if self.CONFIG.has_option('rangefetch', 'password') else self.GAE_PASSWORD
+            self.RANGEFETCH_PATH = self.CONFIG.get('rangefetch', 'path') if self.CONFIG.has_option('rangefetch', 'path') else self.GAE_PATH
+            self.RANGEFETCH_OPTIONS = self.CONFIG.get('rangefetch', 'options') if self.CONFIG.has_option('rangefetch', 'options') else self.GAE_OPTIONS
+        else:
+            self.RANGEFETCH_APPIDS = self.GAE_APPIDS
+            self.RANGEFETCH_PASSWORD = self.GAE_PASSWORD
+            self.RANGEFETCH_PATH = self.GAE_PATH
+            self.RANGEFETCH_OPTIONS = self.GAE_OPTIONS
+
         if self.GAE_PROFILE == 'auto':
             try:
                 socket.create_connection(('2001:4860:4860::8888', 53), timeout=1).close()
@@ -1853,6 +1877,37 @@ except ImportError:
             self.__y = y
             return ''.join(out)
 
+def read_random_bits(nbits):
+    '''Reads 'nbits' random bits.
+
+    If nbits isn't a whole number of bytes, an extra byte will be appended with
+    only the lower bits set.
+    '''
+
+    nbytes, rbits = divmod(nbits, 8)
+
+    # Get the random bytes
+    randomdata = os.urandom(nbytes)
+
+    # Add the remaining random bits
+    if rbits > 0:
+        randomvalue = ord(os.urandom(1))
+        randomvalue >>= (8 - rbits)
+        randomdata = byte(randomvalue) + randomdata
+    return randomdata
+
+def generate_RSA(bits=2048):
+    '''
+    Generate an RSA keypair with an exponent of 65537 in PEM format
+    param: bits The key length in bits
+    Return private key and public key
+    '''
+    from Crypto.PublicKey import RSA
+    new_key = RSA.generate(bits, e=65537)
+    public_key = new_key.publickey().exportKey("PEM")
+    private_key = new_key.exportKey("PEM")
+    print private_key
+    print public_key
 
 class XORCipher(object):
     """XOR Cipher Class"""
@@ -1931,7 +1986,18 @@ class WithGAEFilter(BaseProxyHandlerFilter):
                 kwargs['password'] = common.GAE_PASSWORD
             if common.GAE_VALIDATE:
                 kwargs['validate'] = 1
+            if common.GAE_OPTIONS:
+                kwargs['options'] = common.GAE_OPTIONS
+                kwargs['rsa_key'] = __RSA_KEY__
+            else:
+                kwargs['options'] = ''
+                kwargs['rsa_key'] = None
             fetchservers = ['%s://%s.appspot.com%s' % (common.GAE_MODE, x, common.GAE_PATH) for x in common.GAE_APPIDS]
+            if 'googlevideo.com' in self.path:
+                kwargs['password'] = common.RANGEFETCH_PASSWORD
+                kwargs['options'] = common.RANGEFETCH_OPTIONS
+                kwargs['rsa_key'] = __RANGEFETCH_RSA_KEY__
+                fetchservers = ['%s://%s.appspot.com%s' % (common.GAE_MODE, x, common.RANGEFETCH_PATH) for x in common.RANGEFETCH_APPIDS[i]]
             return [handler.URLFETCH, fetchservers, common.FETCHMAX_LOCAL, False, kwargs]
 
 
@@ -2072,7 +2138,18 @@ class GAEFetchFilter(BaseProxyHandlerFilter):
                 kwargs['password'] = common.GAE_PASSWORD
             if common.GAE_VALIDATE:
                 kwargs['validate'] = 1
+            if common.GAE_OPTIONS:
+                kwargs['options'] = common.GAE_OPTIONS
+                kwargs['rsa_key'] = __RSA_KEY__
+            else:
+                kwargs['options'] = ''
+                kwargs['rsa_key'] = None
             fetchservers = ['%s://%s.appspot.com%s' % (common.GAE_MODE, x, common.GAE_PATH) for x in common.GAE_APPIDS]
+            if 'googlevideo.com' in self.path:
+                kwargs['password'] = common.RANGEFETCH_PASSWORD
+                kwargs['options'] = common.RANGEFETCH_OPTIONS
+                kwargs['rsa_key'] = __RANGEFETCH_RSA_KEY__
+                fetchservers = ['%s://%s.appspot.com%s' % (common.GAE_MODE, x, common.RANGEFETCH_PATH) for x in common.RANGEFETCH_APPIDS[i]]
             return [handler.URLFETCH, fetchservers, common.FETCHMAX_LOCAL, False, kwargs]
 
 
@@ -2092,10 +2169,24 @@ class GAEProxyHandler(AdvancedProxyHandler):
                 common.HOSTS_MAP[host] = common.HOSTS_POSTFIX_MAP['.appspot.com']
             if host not in self.dns_cache:
                 self.dns_cache[host] = common.IPLIST_MAP[common.HOSTS_MAP[host]]
+        for appid in common.RANGEFETCH_APPIDS:
+            host = '%s.appspot.com' % appid
+            if host not in common.HOSTS_MAP:
+                common.HOSTS_MAP[host] = common.HOSTS_POSTFIX_MAP['.appspot.com']
+            if host not in self.dns_cache:
+                self.dns_cache[host] = common.IPLIST_MAP[common.HOSTS_MAP[host]]
 
     def create_http_request_withserver(self, fetchserver, method, url, headers, body, timeout, **kwargs):
         # deflate = lambda x:zlib.compress(x)[2:-4]
         rc4crypt = lambda s, k: RC4Cipher(k).encrypt(s) if k else s
+        options = ''
+        rsa_key = None
+        if 'options' in kwargs:
+            options = kwargs.get('options')
+            del kwargs['options']
+        if 'rsa_key' in kwargs:
+            rsa_key = kwargs.get('rsa_key')
+            del kwargs['rsa_key']
         if body:
             if len(body) < 10 * 1024 * 1024 and 'Content-Encoding' not in headers:
                 zbody = zlib.compress(body)[2:-4]
@@ -2112,11 +2203,28 @@ class GAEProxyHandler(AdvancedProxyHandler):
         # prepare GAE request
         request_method = 'POST'
         request_headers = {}
+        if 'rsa' in options and rsa_key:
+            from Crypto.PublicKey import RSA
+            from Crypto.Cipher import PKCS1_OAEP
+            from Crypto.Random.random import StrongRandom
+            rsakey = RSA.importKey(rsa_key.strip())
+            rsakey = PKCS1_OAEP.new(rsakey)
+            crypt_cookie_key = base64.b64encode(read_random_bits(256))
+            crypt_payload_key = base64.b64encode(read_random_bits(256))
+            crypt_response_msg_key = base64.b64encode(read_random_bits(256))
+            crypt_response_fp_key = base64.b64encode(read_random_bits(256))
+            crypt_keys = crypt_cookie_key + '|' + crypt_payload_key + '|' + crypt_response_msg_key + '|' + crypt_response_fp_key
+            request_headers['X-GOA-KEYS'] = base64.b64encode(rsakey.encrypt(crypt_keys))
+        else:
+            crypt_cookie_key = kwargs.get('password')
+            crypt_payload_key = kwargs.get('password')
+            crypt_response_msg_key = kwargs.get('password')
+            crypt_response_fp_key = kwargs.get('password')
         if common.GAE_OBFUSCATE:
-            if 'rc4' in common.GAE_OPTIONS:
+            if 'rc4' in options:
                 request_headers['X-GOA-Options'] = 'rc4'
-                cookie = base64.b64encode(rc4crypt(zlib.compress(metadata)[2:-4], kwargs.get('password'))).strip()
-                body = rc4crypt(body, kwargs.get('password'))
+                cookie = base64.b64encode(rc4crypt(zlib.compress(metadata)[2:-4], crypt_cookie_key)).strip()
+                body = rc4crypt(body, crypt_payload_key)
             else:
                 cookie = base64.b64encode(zlib.compress(metadata)[2:-4]).strip()
             request_headers['Cookie'] = cookie
@@ -2127,9 +2235,9 @@ class GAEProxyHandler(AdvancedProxyHandler):
         else:
             metadata = zlib.compress(metadata)[2:-4]
             body = '%s%s%s' % (struct.pack('!h', len(metadata)), metadata, body)
-            if 'rc4' in common.GAE_OPTIONS:
+            if 'rc4' in options:
                 request_headers['X-GOA-Options'] = 'rc4'
-                body = rc4crypt(body, kwargs.get('password'))
+                body = rc4crypt(body, crypt_payload_key)
             request_headers['Content-Length'] = str(len(body))
         # post data
         need_crlf = 0 if common.GAE_MODE == 'https' else 1
@@ -2156,11 +2264,17 @@ class GAEProxyHandler(AdvancedProxyHandler):
         if 'rc4' not in response.app_options:
             response.msg = httplib.HTTPMessage(io.BytesIO(zlib.decompress(data, -zlib.MAX_WBITS)))
         else:
-            response.msg = httplib.HTTPMessage(io.BytesIO(zlib.decompress(rc4crypt(data, kwargs.get('password')), -zlib.MAX_WBITS)))
+            response.msg = httplib.HTTPMessage(io.BytesIO(zlib.decompress(rc4crypt(data, crypt_response_msg_key), -zlib.MAX_WBITS)))
             if kwargs.get('password') and response.fp:
-                response.fp = CipherFileObject(response.fp, RC4Cipher(kwargs['password']))
+                response.fp = CipherFileObject(response.fp, RC4Cipher(crypt_response_fp_key))
         return response
 
+    def RANGEFETCH(self, response, fetchservers, **kwargs):
+        kwargs['password'] = common.RANGEFETCH_PASSWORD
+        kwargs['options'] = common.RANGEFETCH_OPTIONS
+        kwargs['rsa_key'] = __RANGEFETCH_RSA_KEY__
+        fetchservers = ['%s://%s.appspot.com%s' % (common.GAE_MODE, x, common.RANGEFETCH_PATH) for x in common.RANGEFETCH_APPIDS[i]]
+        return RangeFetch(self, response, fetchservers, **kwargs).fetch()
 
 class PHPFetchFilter(BaseProxyHandlerFilter):
     """force https filter"""
