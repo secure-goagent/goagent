@@ -1753,10 +1753,11 @@ class Common(object):
 
         self.URLRE_MAP = collections.OrderedDict((re.compile(k).match, v) for k, v in self.CONFIG.items(hosts_section) if '\\' in k)
 
-        self.HTTP_WITHGAE = set(self.CONFIG.get(http_section, 'withgae').split('|'))
+        self.HTTP_WITHGAE = tuple(x for x in self.CONFIG.get(http_section, 'withgae').split('|') if x)
         self.HTTP_CRLFSITES = tuple(self.CONFIG.get(http_section, 'crlfsites').split('|'))
-        self.HTTP_FORCEHTTPS = set(self.CONFIG.get(http_section, 'forcehttps').split('|'))
-        self.HTTP_FAKEHTTPS = set(self.CONFIG.get(http_section, 'fakehttps').split('|'))
+        self.HTTP_FORCEHTTPS = tuple(self.CONFIG.get(http_section, 'forcehttps').split('|'))
+        self.HTTP_FAKEHTTPS = tuple(x for x in self.CONFIG.get(http_section, 'fakehttps').split('|') if x)
+        self.HTTP_NOFAKEHTTPS = tuple(x for x in (self.CONFIG.get(http_section, 'nofakehttps').split('|') if self.CONFIG.has_option(http_section, 'nofakehttps') else '' )if x)
         self.HTTP_DNS = self.CONFIG.get(http_section, 'dns').split('|') if self.CONFIG.has_option(http_section, 'dns') else []
 
         self.IPLIST_MAP = collections.OrderedDict((k, v.split('|')) for k, v in self.CONFIG.items('iplist'))
@@ -2045,7 +2046,7 @@ class UserAgentFilter(BaseProxyHandlerFilter):
 class WithGAEFilter(BaseProxyHandlerFilter):
     """with gae filter"""
     def filter(self, handler):
-        if handler.host in common.HTTP_WITHGAE:
+        if handler.host in common.HTTP_WITHGAE or handler.host.endswith(common.HTTP_WITHGAE):
             logging.debug('WithGAEFilter metched %r %r', handler.path, handler.headers)
             if handler.command == 'CONNECT':
                 return [handler.STRIPSSL, self]
@@ -2072,7 +2073,7 @@ class WithGAEFilter(BaseProxyHandlerFilter):
 class ForceHttpsFilter(BaseProxyHandlerFilter):
     """force https filter"""
     def filter(self, handler):
-        if handler.command != 'CONNECT' and handler.host in common.HTTP_FORCEHTTPS and not handler.headers.get('Referer', '').startswith('https://') and not handler.path.startswith('https://'):
+        if handler.command != 'CONNECT' and (handler.host in common.HTTP_FORCEHTTPS or handler.host.endswith(common.HTTP_FORCEHTTPS)) and not handler.headers.get('Referer', '').startswith('https://') and not handler.path.startswith('https://'):
             logging.debug('ForceHttpsFilter metched %r %r', handler.path, handler.headers)
             headers = {'Location': handler.path.replace('http://', 'https://', 1), 'Connection': 'close'}
             return [handler.MOCK, 301, headers, '']
@@ -2081,7 +2082,7 @@ class ForceHttpsFilter(BaseProxyHandlerFilter):
 class FakeHttpsFilter(BaseProxyHandlerFilter):
     """fake https filter"""
     def filter(self, handler):
-        if handler.command == 'CONNECT' and handler.host in common.HTTP_FAKEHTTPS:
+        if handler.command == 'CONNECT' and (handler.host in common.HTTP_FAKEHTTPS or handler.host.endswith(common.HTTP_FAKEHTTPS)) and not handler.host.endswith(common.HTTP_NOFAKEHTTPS):
             return [handler.STRIPSSL, None]
 
 
