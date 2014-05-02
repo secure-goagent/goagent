@@ -1166,7 +1166,7 @@ class SimpleProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
                 headers = {'Content-Type': 'text/html'}
                 content = message_html('502 URLFetch failed', 'Local URLFetch %r failed' % url, '<br>'.join(repr(x) for x in errors))
             return self.MOCK(status, headers, content)
-        logging.info('%s "URL %s %s %s" %s %s', self.address_string(), method, url, self.protocol_version, response.status, response.getheader('Content-Length', '-'))
+        #logging.info('%s "URL %s %s %s" %s %s', self.address_string(), method, url, self.protocol_version, response.status, response.getheader('Content-Length', '-'))
         try:
             if response.status == 206:
                 return self.RANGEFETCH(response, fetchservers, **kwargs)
@@ -1321,8 +1321,10 @@ class RangeFetch(object):
                     logging.warning('RangeFetch %s return %r', headers['Range'], response)
                     range_queue.put((start, end, None))
                     continue
+                gae_appid = ''
                 if fetchserver:
                     self._last_app_status[fetchserver] = response.app_status
+                    gae_appid = urlparse.urlsplit(fetchserver).netloc.split('.')[-3]
                 if response.app_status != 200:
                     logging.warning('Range Fetch "%s %s" %s return %s', self.handler.command, self.url, headers['Range'], response.app_status)
                     response.close()
@@ -1342,7 +1344,7 @@ class RangeFetch(object):
                         range_queue.put((start, end, None))
                         continue
                     content_length = int(response.getheader('Content-Length', 0))
-                    logging.info('>>>>>>>>>>>>>>> [thread %s] %s %s', threading.currentThread().ident, content_length, content_range)
+                    logging.info('>>>>>>>>>>>>>>> [thread %s] %s %s %s %s', threading.currentThread().ident, content_length, content_range, gae_appid, self.kwargs['options'])
                     while 1:
                         try:
                             if self._stopped:
@@ -2089,15 +2091,6 @@ class UserAgentFilter(BaseProxyHandlerFilter):
             handler.headers['User-Agent'] = common.USERAGENT_STRING
 
 
-class WithGAEFilter(BaseProxyHandlerFilter):
-    """with gae filter"""
-    def filter(self, handler):
-        if handler.host in common.HTTP_WITHGAE or handler.host.endswith(common.HTTP_WITHGAE):
-            logging.debug('WithGAEFilter metched %r %r', handler.path, handler.headers)
-            # assume the last one handler is GAEFetchFilter
-            return handler.handler_filters[-1].filter(handler)
-
-
 class ForceHttpsFilter(BaseProxyHandlerFilter):
     """force https filter"""
     def filter(self, handler):
@@ -2255,6 +2248,13 @@ class GAEFetchFilter(BaseProxyHandlerFilter):
             return [handler.URLFETCH, fetchservers, common.FETCHMAX_LOCAL, kwargs]
 
 
+class WithGAEFilter(GAEFetchFilter):
+    """with gae filter"""
+    def filter(self, handler):
+        if handler.host in common.HTTP_WITHGAE or handler.host.endswith(common.HTTP_WITHGAE):
+            logging.debug('WithGAEFilter metched %r %r', handler.path, handler.headers)
+            return super(WithGAEFilter, self).filter(handler)
+
 class GAEProxyHandler(AdvancedProxyHandler):
     """GAE Proxy Handler"""
     handler_filters = [UserAgentFilter(), WithGAEFilter(), FakeHttpsFilter(), ForceHttpsFilter(), HostsFilter(), DirectRegionFilter(), AutoRangeFilter(), GAEFetchFilter()]
@@ -2370,6 +2370,11 @@ class GAEProxyHandler(AdvancedProxyHandler):
             response.msg = httplib.HTTPMessage(io.BytesIO(zlib.decompress(rc4crypt(data, crypt_response_msg_key), -zlib.MAX_WBITS)))
             if crypt_response_fp_key and response.fp:
                 response.fp = CipherFileObject(response.fp, RC4Cipher(crypt_response_fp_key))
+        gae_appid = urlparse.urlsplit(fetchserver).netloc.split('.')[-3]
+        if response.status == 206:
+            logging.debug('%s "GAE %s %s %s" %s %s %s %s', self.address_string(), method, url, self.protocol_version, gae_appid, options, response.status, response.getheader('Content-Length', '-'))
+        else:
+            logging.info('%s "GAE %s %s %s" %s %s %s %s', self.address_string(), method, url, self.protocol_version, gae_appid, options, response.status, response.getheader('Content-Length', '-'))
         return response
 
     def RANGEFETCH(self, response, fetchservers, **kwargs):
@@ -2453,6 +2458,7 @@ class PHPProxyHandler(AdvancedProxyHandler):
         if need_decrypt:
             response.fp = CipherFileObject(response.fp, XORCipher(kwargs['password'][0]))
         self.close_connection = 1
+        logging.info('%s "PHP %s %s %s" %s %s', self.address_string(), method, url, self.protocol_version, response.status, response.getheader('Content-Length', '-'))
         return response
 
 
