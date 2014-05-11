@@ -813,10 +813,11 @@ class URLFetch(object):
     """URLFetch for gae/php fetchservers"""
     skip_headers = frozenset(['Vary', 'Via', 'X-Forwarded-For', 'Proxy-Authorization', 'Proxy-Connection', 'Upgrade', 'X-Chrome-Variations', 'Connection', 'Cache-Control'])
 
-    def __init__(self, fetchserver, create_http_request):
+    def __init__(self, handler, fetchserver):
         assert isinstance(fetchserver, basestring) and callable(create_http_request)
+        self.handler = handler
         self.fetchserver = fetchserver
-        self.create_http_request = create_http_request
+        self.create_http_request = handler.create_http_request
 
     def fetch(self, method, url, headers, body, timeout, **kwargs):
         if '.appspot.com/' in self.fetchserver:
@@ -918,11 +919,11 @@ class URLFetch(object):
             response.msg = httplib.HTTPMessage(io.BytesIO(zlib.decompress(rc4crypt(data, crypt_response_msg_key), -zlib.MAX_WBITS)))
             if crypt_response_fp_key and response.fp:
                 response.fp = CipherFileObject(response.fp, RC4Cipher(crypt_response_fp_key))
-        gae_appid = urlparse.urlsplit(fetchserver).netloc.split('.')[-3]
+        gae_appid = urlparse.urlsplit(self.fetchserver).netloc.split('.')[-3]
         if response.status == 206:
-            logging.debug('%s "GAE %s %s %s" %s %s %s %s', self.address_string(), method, url, self.protocol_version, gae_appid, options, response.status, response.getheader('Content-Length', '-'))
+            logging.debug('%s "GAE %s %s %s" %s %s %s %s', self.handler.address_string(), method, url, self.handler.protocol_version, gae_appid, options, response.status, response.getheader('Content-Length', '-'))
         else:
-            logging.info('%s "GAE %s %s %s" %s %s %s %s', self.address_string(), method, url, self.protocol_version, gae_appid, options, response.status, response.getheader('Content-Length', '-'))
+            logging.info('%s "GAE %s %s %s" %s %s %s %s', self.handler.address_string(), method, url, self.handler.protocol_version, gae_appid, options, response.status, response.getheader('Content-Length', '-'))
         return response
 
     def __php_fetch(self, method, url, headers, body, timeout, **kwargs):
@@ -1128,7 +1129,7 @@ class SimpleProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         return response
 
     def create_http_request_withserver(self, fetchserver, method, url, headers, body, timeout, **kwargs):
-        return URLFetch(fetchserver, self.create_http_request).fetch(method, url, headers, body, timeout, **kwargs)
+        return URLFetch(self, fetchserver).fetch(method, url, headers, body, timeout, **kwargs)
 
     def handle_urlfetch_error(self, fetchserver, response):
         pass
