@@ -1264,7 +1264,7 @@ class SimpleProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         data_is_clienthello = is_clienthello(data)
         if data_is_clienthello:
             kwargs['client_hello'] = data
-        max_retry = kwargs.get('max_retry', 3)
+        max_retry = kwargs.get('max_retry', 5)
         for i in xrange(max_retry):
             try:
                 if do_ssl_handshake:
@@ -1335,7 +1335,7 @@ class SimpleProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             if response:
                 response.close()
 
-    def URLFETCH(self, fetchservers, max_retry=2, kwargs={}):
+    def URLFETCH(self, fetchservers, max_retry=5, kwargs={}):
         """urlfetch from fetchserver"""
         method = self.command
         if self.path[0] == '/':
@@ -1689,7 +1689,7 @@ class AdvancedProxyHandler(SimpleProxyHandler):
             pass
         addresses = [(x, port) for x in self.gethostbyname2(hostname)]
         sock = None
-        for _ in range(kwargs.get('max_retry', 3)):
+        for _ in range(kwargs.get('max_retry', 5)):
             window = min((self.max_window+1)//2, len(addresses))
             if client_hello:
                 addresses.sort(key=self.tcp_connection_time_with_clienthello.__getitem__)
@@ -1785,7 +1785,7 @@ class AdvancedProxyHandler(SimpleProxyHandler):
                 # set a short timeout to trigger timeout retry more quickly.
                 sock.settimeout(timeout or self.connect_timeout)
                 # pick up the certificate
-                server_hostname = b'mail.google.com' if cache_key.startswith('google_') or hostname.endswith('.appspot.com') else None
+                server_hostname = b'mail.google.com' if hostname.endswith('.appspot.com') else None
                 ssl_sock = SSLConnection(self.openssl_context, sock)
                 ssl_sock.set_connect_state()
                 if server_hostname:
@@ -1850,7 +1850,7 @@ class AdvancedProxyHandler(SimpleProxyHandler):
             pass
         addresses = [(x, port) for x in self.gethostbyname2(hostname)]
         sock = None
-        for _ in range(kwargs.get('max_retry', 3)):
+        for _ in range(kwargs.get('max_retry', 10)):
             window = min((self.max_window+1)//2, len(addresses))
             addresses.sort(key=self.ssl_connection_time.__getitem__)
             addrs = addresses[:window] + random.sample(addresses, window)
@@ -1868,7 +1868,7 @@ class AdvancedProxyHandler(SimpleProxyHandler):
         if isinstance(sock, Exception):
             raise sock
 
-    def create_http_request(self, method, url, headers, body, timeout, max_retry=2, bufsize=8192, crlf=None, validate=None, cache_key=None):
+    def create_http_request(self, method, url, headers, body, timeout, max_retry=5, bufsize=8192, crlf=None, validate=None, cache_key=None):
         scheme, netloc, path, query, _ = urlparse.urlsplit(url)
         if netloc.rfind(':') <= netloc.rfind(']'):
             # no port number
@@ -2119,7 +2119,7 @@ class Common(object):
                     if "<local>" in dnsservers:
                         iplist += socket.gethostbyname_ex(host)[-1]
                     else:
-                        iplist += dnslib_record2iplist(dnslib_resolve_over_udp(host, dnsservers, timeout=4, blacklist=self.DNS_BLACKLIST))
+                        iplist += dnslib_record2iplist(dnslib_resolve_over_udp(host, dnsservers, timeout=2, blacklist=self.DNS_BLACKLIST))
                         iplist += DNSUtil.remote_resolve(dnsserver, host, self.DNS_BLACKLIST, timeout=2)
                 except (socket.error, OSError) as e:
                     logging.debug('%r remote host=%r failed: %s', dnslib_resolve, host, e)
@@ -2139,7 +2139,7 @@ class Common(object):
                     thread.start_new_thread(do_resolve, (host, ["<local>"], result_queue))
             for _ in xrange(len(self.DNS_SERVERS) * len(need_resolve_remote) * 2):
                 try:
-                    host, dnsservers, iplist = result_queue.get(timeout=10)
+                    host, dnsservers, iplist = result_queue.get(timeout=5)
                     resolved_iplist += iplist or []
                     logging.debug('resolve remote host=%r from dnsservers=%s return iplist=%s', host, dnsservers, iplist)
                 except Queue.Empty:
