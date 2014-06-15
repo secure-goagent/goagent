@@ -1764,7 +1764,7 @@ class AdvancedProxyHandler(SimpleProxyHandler):
                 # set a short timeout to trigger timeout retry more quickly.
                 sock.settimeout(timeout or self.connect_timeout)
                 # pick up the certificate
-                server_hostname = b'www.googleapis.com' if cache_key.startswith('google_') or hostname.endswith('.appspot.com') else None
+                server_hostname = b'www.googleapis.com' if hostname.endswith('.appspot.com') else None
                 ssl_sock = SSLConnection(self.openssl_context, sock)
                 ssl_sock.set_connect_state()
                 if server_hostname and hasattr(ssl_sock, 'set_tlsext_host_name'):
@@ -2478,7 +2478,7 @@ class HostsFilter(BaseProxyHandlerFilter):
                 logging.info('HostsFilter dnslib_resolve_over_tcp %r with %r return %s', host, handler.dns_servers, iplist)
                 handler.dns_cache[host] = iplist
             except socket.error as e:
-                logging.warning('HostsFilter dnslib_resolve_over_tcp %r with %r failed: %r', host, handler.dns_servers, e)
+                logging.debug('HostsFilter dnslib_resolve_over_tcp %r with %r failed: %r', host, handler.dns_servers, e)
         elif re.match(r'^\d+\.\d+\.\d+\.\d+$', hostname) or ':' in hostname:
             handler.dns_cache[host] = [hostname]
         elif hostname.startswith('file://'):
