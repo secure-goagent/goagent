@@ -680,7 +680,7 @@ def dnslib_resolve_over_tcp(query, dnsservers, timeout, **kwargs):
         if result and not isinstance(result, Exception):
             return result
         elif i == len(dnsservers) - 1:
-            logging.warning('dnslib_resolve_over_tcp %r with %s return %r', query, dnsservers, result)
+            logging.debug('dnslib_resolve_over_tcp %r with %s return %r', query, dnsservers, result)
     raise socket.gaierror(11004, 'getaddrinfo %r from %r failed' % (query, dnsservers))
 
 
