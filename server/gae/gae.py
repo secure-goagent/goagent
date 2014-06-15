@@ -18,6 +18,7 @@ import time
 import struct
 import zlib
 import base64
+import binascii
 import logging
 import urlparse
 import io
@@ -102,11 +103,12 @@ def deflate(data):
 
 
 def application(environ, start_response):
-    query_string = environ.get('QUERY_STRING', '')
+    ps_header = environ.get('HTTP_X_GOA_PS', '')
+    # logging.info('ps_header=%r', ps_header)
     options = environ.get('HTTP_X_GOA_OPTIONS', '')
     crypt_keys = environ.get('HTTP_X_GOA_KEYS', '')
 
-    if environ['REQUEST_METHOD'] == 'GET' and not query_string:
+    if environ['REQUEST_METHOD'] == 'GET' and not ps_header:
         timestamp = long(os.environ['CURRENT_VERSION_ID'].split('.')[1])/2**28
         ctime = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(timestamp+8*3600))
         html = u'GoAgent Python Server %s \u5df2\u7ecf\u5728\u5de5\u4f5c\u4e86\uff0c\u90e8\u7f72\u65f6\u95f4 %s\n' % (__version__, ctime)
@@ -133,9 +135,8 @@ def application(environ, start_response):
         crypt_response_fp_key = __password__
 
     try:
-        if query_string:
-            query_string_1, _, query_string_2 = query_string.partition(',')
-            metadata, payload = inflate(base64.b64decode(query_string)).split('\n\n', 1)
+        if ps_header:
+            metadata, payload = inflate(base64.b64decode(ps_header)).split('\n\n', 1)
         else:
             wsgi_input = environ['wsgi.input']
             input_data = wsgi_input.read(int(environ.get('CONTENT_LENGTH', '0')))
