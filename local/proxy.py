@@ -2590,8 +2590,10 @@ class GAEFetchFilter(BaseProxyHandlerFilter):
 
 class WithGAEFilter(GAEFetchFilter):
     """with gae filter"""
+    def __init__(self, withgae_sites):
+        self.withgae_sites = set(withgae_sites)
     def filter(self, handler):
-        if handler.host in common.HTTP_WITHGAE or handler.host.endswith(common.HTTP_WITHGAE):
+        if handler.host in self.withgae_sites:
             logging.debug('WithGAEFilter metched %r %r', handler.path, handler.headers)
             return super(WithGAEFilter, self).filter(handler)
 
